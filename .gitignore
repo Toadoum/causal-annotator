@@ -1,0 +1,8 @@
+my_venv/
+__pycache__/
+*.pyc
+output/
+.env
+.DS_Store
+
+data/train_pairs.json
