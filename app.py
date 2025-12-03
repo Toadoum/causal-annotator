@@ -1772,40 +1772,45 @@ def login_page():
         </div>
         """, unsafe_allow_html=True)
         
-        with st.form("login"):
-            username = st.text_input("👤 Identifiant", placeholder="Votre nom d'utilisateur")
-            password = st.text_input("🔒 Mot de passe", type="password", placeholder="Votre mot de passe")
-            
-            st.markdown("<div style='height: 0.5rem'></div>", unsafe_allow_html=True)
-            
-            if st.form_submit_button("Se connecter", use_container_width=True, type="primary"):
-                if verify_user(username, password):
-                    st.session_state.authenticated = True
-                    st.session_state.username = username
-                    st.session_state.login_time = datetime.now().isoformat()
-                    st.rerun()
-                else:
-                    st.error("❌ Identifiants incorrects")
-            
-            # Option pour créer un compte
-            with st.expander("📝 Pas encore de compte ?"):
-                new_user = st.text_input("Nouvel identifiant")
-                new_pass = st.text_input("Nouveau mot de passe", type="password")
-                confirm_pass = st.text_input("Confirmer le mot de passe", type="password")
+        # Onglets pour connexion/création de compte
+        tab1, tab2 = st.tabs(["🔐 Connexion", "📝 Créer un compte"])
+        
+        with tab1:
+            with st.form("login_form"):
+                username = st.text_input("👤 Identifiant", placeholder="Votre nom d'utilisateur", key="login_username")
+                password = st.text_input("🔒 Mot de passe", type="password", placeholder="Votre mot de passe", key="login_password")
                 
-                if st.button("Créer le compte"):
+                if st.form_submit_button("Se connecter", use_container_width=True, type="primary"):
+                    if verify_user(username, password):
+                        st.session_state.authenticated = True
+                        st.session_state.username = username
+                        st.session_state.login_time = datetime.now().isoformat()
+                        st.rerun()
+                    else:
+                        st.error("❌ Identifiants incorrects")
+        
+        with tab2:
+            with st.form("create_account_form"):
+                new_user = st.text_input("👤 Nouvel identifiant", placeholder="Choisissez un nom d'utilisateur", key="new_username")
+                new_pass = st.text_input("🔒 Nouveau mot de passe", type="password", placeholder="Choisissez un mot de passe", key="new_password")
+                confirm_pass = st.text_input("🔁 Confirmer le mot de passe", type="password", placeholder="Retapez le mot de passe", key="confirm_password")
+                
+                if st.form_submit_button("Créer le compte", use_container_width=True, type="primary"):
                     if not new_user or not new_pass:
-                        st.error("Veuillez remplir tous les champs")
+                        st.error("❌ Veuillez remplir tous les champs")
                     elif new_pass != confirm_pass:
-                        st.error("Les mots de passe ne correspondent pas")
+                        st.error("❌ Les mots de passe ne correspondent pas")
                     else:
                         users = load_users()
                         if new_user in users:
-                            st.error("Cet utilisateur existe déjà")
+                            st.error("❌ Cet utilisateur existe déjà")
                         else:
                             users[new_user] = hash_password(new_pass)
-                            save_json(USERS_FILE, users)
-                            st.success("✅ Compte créé ! Vous pouvez maintenant vous connecter")
+                            if save_json(USERS_FILE, users):
+                                st.success("✅ Compte créé avec succès !")
+                                st.info("Vous pouvez maintenant vous connecter avec vos identifiants.")
+                            else:
+                                st.error("❌ Erreur lors de la création du compte")
 
 def logout():
     """Déconnexion de l'utilisateur"""
