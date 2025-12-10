@@ -1,1972 +1,919 @@
-# """
-# CausaFr - Outil d'Annotation Professionnelle
-# =============================================
-# Interface moderne et professionnelle pour l'annotation de relations causales.
-
-# Lancer avec: streamlit run causafr_annotation_app.py
-# """
-
-# import streamlit as st
-# import json
-# import os
-# import hashlib
-# from datetime import datetime
-
-# # =========================
-# # Configuration
-# # =========================
-
-# DATA_DIR = "data"
-# OUT_DIR = "output"
-# USERS_FILE = "users.json"
-# PROGRESS_FILE = "annotation_progress.json"
-
-# os.makedirs(OUT_DIR, exist_ok=True)
-
-# # =========================
-# # Styles CSS Professionnels
-# # =========================
-
-# def load_custom_css():
-#     st.markdown("""
-#     <style>
-#     /* === IMPORTS === */
-#     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-    
-#     /* === VARIABLES === */
-#     :root {
-#         --primary: #6366F1;
-#         --primary-dark: #4F46E5;
-#         --success: #10B981;
-#         --warning: #F59E0B;
-#         --error: #EF4444;
-#         --bg-dark: #0F172A;
-#         --bg-card: #FFFFFF;
-#         --text-primary: #1E293B;
-#         --text-muted: #64748B;
-#         --border: #E2E8F0;
-#         --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-#         --radius: 12px;
-#     }
-    
-#     /* === GLOBAL === */
-#     .main .block-container {
-#         padding: 1.5rem 2rem 3rem 2rem;
-#         max-width: 1200px;
-#     }
-    
-#     h1, h2, h3, h4 { font-family: 'Inter', sans-serif !important; }
-    
-#     /* === HEADER === */
-#     .main-header {
-#         background: linear-gradient(135deg, #6366F1 0%, #8B5CF6 50%, #A855F7 100%);
-#         padding: 2rem 2.5rem;
-#         border-radius: 20px;
-#         margin-bottom: 2rem;
-#         position: relative;
-#         overflow: hidden;
-#     }
-    
-#     .main-header::before {
-#         content: '';
-#         position: absolute;
-#         top: 0; right: 0; bottom: 0; left: 0;
-#         background: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.05'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
-#         opacity: 0.5;
-#     }
-    
-#     .main-header h1 {
-#         color: white !important;
-#         font-weight: 700;
-#         font-size: 1.75rem;
-#         margin: 0;
-#         position: relative;
-#         z-index: 1;
-#     }
-    
-#     .main-header p {
-#         color: rgba(255,255,255,0.9);
-#         margin: 0.5rem 0 0 0;
-#         font-size: 0.95rem;
-#         position: relative;
-#         z-index: 1;
-#     }
-    
-#     /* === CARDS === */
-#     .card {
-#         background: white;
-#         border-radius: var(--radius);
-#         padding: 1.5rem;
-#         box-shadow: var(--shadow);
-#         border: 1px solid var(--border);
-#         transition: transform 0.2s, box-shadow 0.2s;
-#     }
-    
-#     .card:hover {
-#         transform: translateY(-2px);
-#         box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1);
-#     }
-    
-#     /* === EVENT BOXES === */
-#     .event-box {
-#         border-radius: var(--radius);
-#         padding: 1rem 1.25rem;
-#         margin-bottom: 0.75rem;
-#         border-left: 4px solid;
-#     }
-    
-#     .event-box.cause {
-#         background: linear-gradient(to right, #EFF6FF, #F8FAFC);
-#         border-color: #3B82F6;
-#     }
-    
-#     .event-box.effect {
-#         background: linear-gradient(to right, #ECFDF5, #F8FAFC);
-#         border-color: #10B981;
-#     }
-    
-#     .event-box .label {
-#         font-size: 0.7rem;
-#         font-weight: 700;
-#         text-transform: uppercase;
-#         letter-spacing: 1px;
-#         margin-bottom: 0.25rem;
-#     }
-    
-#     .event-box.cause .label { color: #1D4ED8; }
-#     .event-box.effect .label { color: #059669; }
-    
-#     /* === QUESTION BOX === */
-#     .question-box {
-#         background: linear-gradient(135deg, #EEF2FF 0%, #E0E7FF 100%);
-#         border: 2px solid #C7D2FE;
-#         border-radius: var(--radius);
-#         padding: 1.5rem;
-#         margin: 1.5rem 0;
-#         text-align: center;
-#     }
-    
-#     .question-box h3 {
-#         color: #4338CA;
-#         font-size: 1.15rem;
-#         margin: 0 0 0.5rem 0;
-#     }
-    
-#     .question-box p {
-#         color: #6366F1;
-#         margin: 0;
-#         font-size: 0.9rem;
-#     }
-    
-#     /* === METRICS === */
-#     .metric-grid {
-#         display: grid;
-#         grid-template-columns: repeat(4, 1fr);
-#         gap: 1rem;
-#         margin: 1.5rem 0;
-#     }
-    
-#     .metric-item {
-#         background: white;
-#         border-radius: var(--radius);
-#         padding: 1.25rem;
-#         text-align: center;
-#         border: 1px solid var(--border);
-#         transition: all 0.2s;
-#     }
-    
-#     .metric-item:hover {
-#         border-color: var(--primary);
-#         box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
-#     }
-    
-#     .metric-item .icon { font-size: 1.5rem; margin-bottom: 0.5rem; }
-#     .metric-item .value { font-size: 1.75rem; font-weight: 700; color: var(--primary); }
-#     .metric-item .label { font-size: 0.8rem; color: var(--text-muted); margin-top: 0.25rem; }
-    
-#     /* === PROGRESS === */
-#     .progress-wrapper {
-#         background: var(--border);
-#         border-radius: 999px;
-#         height: 10px;
-#         overflow: hidden;
-#         margin: 1rem 0;
-#     }
-    
-#     .progress-fill {
-#         height: 100%;
-#         border-radius: 999px;
-#         background: linear-gradient(90deg, #6366F1, #A855F7);
-#         transition: width 0.5s ease;
-#     }
-    
-#     /* === BADGE === */
-#     .badge {
-#         display: inline-flex;
-#         align-items: center;
-#         gap: 0.35rem;
-#         padding: 0.35rem 0.85rem;
-#         border-radius: 999px;
-#         font-size: 0.75rem;
-#         font-weight: 600;
-#     }
-    
-#     .badge.success { background: #D1FAE5; color: #065F46; }
-#     .badge.warning { background: #FEF3C7; color: #92400E; }
-#     .badge.info { background: #DBEAFE; color: #1E40AF; }
-#     .badge.error { background: #FEE2E2; color: #991B1B; }
-    
-#     /* === KAPPA RESULT === */
-#     .kappa-card {
-#         background: white;
-#         border-radius: var(--radius);
-#         padding: 1.25rem 1.5rem;
-#         margin-bottom: 1rem;
-#         border-left: 4px solid;
-#         display: flex;
-#         justify-content: space-between;
-#         align-items: center;
-#     }
-    
-#     .kappa-card.excellent { border-color: #10B981; }
-#     .kappa-card.good { border-color: #3B82F6; }
-#     .kappa-card.moderate { border-color: #F59E0B; }
-#     .kappa-card.poor { border-color: #EF4444; }
-    
-#     .kappa-value {
-#         font-size: 1.75rem;
-#         font-weight: 700;
-#     }
-    
-#     .kappa-card.excellent .kappa-value { color: #10B981; }
-#     .kappa-card.good .kappa-value { color: #3B82F6; }
-#     .kappa-card.moderate .kappa-value { color: #F59E0B; }
-#     .kappa-card.poor .kappa-value { color: #EF4444; }
-    
-#     /* === SIDEBAR === */
-#     section[data-testid="stSidebar"] {
-#         background: linear-gradient(180deg, #1E293B 0%, #0F172A 100%);
-#     }
-    
-#     section[data-testid="stSidebar"] * {
-#         color: #CBD5E1 !important;
-#     }
-    
-#     section[data-testid="stSidebar"] h1,
-#     section[data-testid="stSidebar"] h2,
-#     section[data-testid="stSidebar"] h3,
-#     section[data-testid="stSidebar"] strong {
-#         color: white !important;
-#     }
-    
-#     section[data-testid="stSidebar"] .stButton button {
-#         background: rgba(255,255,255,0.1);
-#         border: 1px solid rgba(255,255,255,0.2);
-#         color: white !important;
-#     }
-    
-#     section[data-testid="stSidebar"] .stButton button:hover {
-#         background: rgba(255,255,255,0.2);
-#         border-color: rgba(255,255,255,0.3);
-#     }
-    
-#     /* === BUTTONS === */
-#     .stButton button {
-#         font-family: 'Inter', sans-serif;
-#         font-weight: 500;
-#         border-radius: 8px;
-#         transition: all 0.2s;
-#     }
-    
-#     .stButton button:hover {
-#         transform: translateY(-1px);
-#     }
-    
-#     .stButton button[kind="primary"] {
-#         background: linear-gradient(135deg, #6366F1, #8B5CF6);
-#         border: none;
-#     }
-    
-#     .stButton button[kind="primary"]:hover {
-#         background: linear-gradient(135deg, #4F46E5, #7C3AED);
-#         box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
-#     }
-    
-#     /* === ALERT BOX === */
-#     .alert {
-#         padding: 1rem 1.25rem;
-#         border-radius: 8px;
-#         margin-bottom: 1rem;
-#         border-left: 4px solid;
-#     }
-    
-#     .alert.info { background: #EFF6FF; border-color: #3B82F6; color: #1E40AF; }
-#     .alert.success { background: #ECFDF5; border-color: #10B981; color: #065F46; }
-#     .alert.warning { background: #FFFBEB; border-color: #F59E0B; color: #92400E; }
-#     .alert.error { background: #FEF2F2; border-color: #EF4444; color: #991B1B; }
-    
-#     /* === HIDE STREAMLIT === */
-#     #MainMenu, footer, header { visibility: hidden; }
-    
-#     /* === EXPANDER === */
-#     .streamlit-expanderHeader {
-#         font-family: 'Inter', sans-serif;
-#         font-weight: 500;
-#         background: #F8FAFC;
-#         border-radius: 8px;
-#         border: 1px solid var(--border);
-#     }
-    
-#     /* === LOGIN === */
-#     .login-box {
-#         max-width: 380px;
-#         margin: 0 auto;
-#         padding: 2.5rem;
-#         background: white;
-#         border-radius: 20px;
-#         box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.15);
-#     }
-    
-#     .login-logo {
-#         text-align: center;
-#         margin-bottom: 2rem;
-#     }
-    
-#     .login-logo .icon { font-size: 3.5rem; }
-#     .login-logo h1 { font-size: 1.5rem; margin: 0.5rem 0 0 0; color: #1E293B; }
-#     .login-logo p { color: #64748B; font-size: 0.9rem; margin: 0.25rem 0 0 0; }
-#     </style>
-#     """, unsafe_allow_html=True)
-
-# # =========================
-# # Composants UI
-# # =========================
-
-# def render_header(title, subtitle=None):
-#     sub_html = f"<p>{subtitle}</p>" if subtitle else ""
-#     st.markdown(f"""
-#     <div class="main-header">
-#         <h1>🔗 {title}</h1>
-#         {sub_html}
-#     </div>
-#     """, unsafe_allow_html=True)
-
-# def render_metrics(stats):
-#     st.markdown(f"""
-#     <div class="metric-grid">
-#         <div class="metric-item">
-#             <div class="icon">📊</div>
-#             <div class="value">{stats['total']}</div>
-#             <div class="label">Total</div>
-#         </div>
-#         <div class="metric-item">
-#             <div class="icon">✏️</div>
-#             <div class="value">{stats['annotated']}</div>
-#             <div class="label">Annotées</div>
-#         </div>
-#         <div class="metric-item">
-#             <div class="icon">✅</div>
-#             <div class="value">{stats['causal']}</div>
-#             <div class="label">Causales</div>
-#         </div>
-#         <div class="metric-item">
-#             <div class="icon">❌</div>
-#             <div class="value">{stats['non_causal']}</div>
-#             <div class="label">Non causales</div>
-#         </div>
-#     </div>
-#     """, unsafe_allow_html=True)
-
-# def render_progress(current, total):
-#     pct = (current / total * 100) if total > 0 else 0
-#     st.markdown(f"""
-#     <div class="progress-wrapper">
-#         <div class="progress-fill" style="width: {pct}%"></div>
-#     </div>
-#     <p style="text-align: center; color: #64748B; font-size: 0.85rem;">
-#         <strong>{current}</strong> sur {total} ({pct:.1f}%)
-#     </p>
-#     """, unsafe_allow_html=True)
-
-# def render_kappa(ann1, ann2, kappa, agreement, count):
-#     if kappa >= 0.8:
-#         level, label = "excellent", "Excellent"
-#     elif kappa >= 0.6:
-#         level, label = "good", "Bon"
-#     elif kappa >= 0.4:
-#         level, label = "moderate", "Modéré"
-#     else:
-#         level, label = "poor", "Faible"
-    
-#     st.markdown(f"""
-#     <div class="kappa-card {level}">
-#         <div>
-#             <strong style="font-size: 1.1rem;">{ann1} ↔ {ann2}</strong>
-#             <br><span style="color: #64748B; font-size: 0.85rem;">{count} paires • Accord : {agreement:.1f}%</span>
-#         </div>
-#         <div style="text-align: right;">
-#             <div class="kappa-value">κ = {kappa:.3f}</div>
-#             <span class="badge {level}">{label}</span>
-#         </div>
-#     </div>
-#     """, unsafe_allow_html=True)
-
-# # =========================
-# # Utilitaires
-# # =========================
-
-# def load_json(path):
-#     if not os.path.exists(path):
-#         return {}
-#     try:
-#         with open(path, "r", encoding="utf-8") as f:
-#             return json.load(f)
-#     except Exception:
-#         # Corrupted JSON
-#         return {}
-
-# def save_json(path, data):
-#     with open(path, "w", encoding="utf-8") as f:
-#         json.dump(data, f, indent=2, ensure_ascii=False)
-
-# def hash_password(password):
-#     return hashlib.sha256(password.encode()).hexdigest()
-
-# def load_users():
-#     return load_json(USERS_FILE) if os.path.exists(USERS_FILE) else {}
-
-# def verify_user(username, password):
-#     users = load_users()
-#     if username in users:
-#         stored = users[username]
-#         # allow either hashed or plain (for backward compatibility)
-#         if len(stored) == 64:
-#             return stored == hash_password(password)
-#         return stored == password
-#     return False
-
-# def load_progress():
-#     return load_json(PROGRESS_FILE) if os.path.exists(PROGRESS_FILE) else {}
-
-# def save_progress(username, dataset, index, total):
-#     progress = load_progress()
-#     if username not in progress:
-#         progress[username] = {}
-#     progress[username][dataset] = {
-#         "current_index": index,
-#         "total_annotated": total,
-#         "last_updated": datetime.now().isoformat()
-#     }
-#     save_json(PROGRESS_FILE, progress)
-
-# def get_user_progress(username, dataset):
-#     progress = load_progress()
-#     return progress.get(username, {}).get(dataset, {"current_index": 0, "total_annotated": 0})
-
-# def get_annotated_path(username, dataset):
-#     return os.path.join(OUT_DIR, f"{dataset.replace('.json', '')}_{username}_annotated.json")
-
-# def compute_stats(pairs):
-#     total = len(pairs)
-#     if total == 0:
-#         return {"total": 0, "annotated": 0, "causal": 0, "non_causal": 0, "causal_rate": 0}
-#     causal = sum(1 for p in pairs if p.get("label") == 1)
-#     non_causal = sum(1 for p in pairs if p.get("label") == 0)
-#     annotated = sum(1 for p in pairs if p.get("annotated_by"))
-#     return {
-#         "total": total,
-#         "annotated": annotated,
-#         "causal": causal,
-#         "non_causal": non_causal,
-#         "causal_rate": causal / total * 100 if total > 0 else 0
-#     }
-
-# # ---------- NEW: safe loader for pairs ----------
-
-# def load_pairs_from_any(data_obj):
-#     """
-#     Accept both:
-#       - list of pairs (preferred, Format A)
-#       - dict with "pairs": [...]
-#     Always return a list (possibly empty).
-#     """
-#     if isinstance(data_obj, list):
-#         return data_obj
-#     if isinstance(data_obj, dict):
-#         pairs = data_obj.get("pairs", [])
-#         return pairs if isinstance(pairs, list) else []
-#     return []
-
-# def load_pairs_for_user(username, dataset):
-#     """
-#     Load pairs for annotation for a given user and dataset.
-
-#     Priority:
-#       1. user-specific annotated file in OUT_DIR (Format A: list)
-#       2. original dataset in DATA_DIR
-
-#     Handles legacy {"pairs": [...]} format, but always returns a list.
-#     """
-#     data_path = os.path.join(DATA_DIR, dataset)
-#     out_path = get_annotated_path(username, dataset)
-
-#     # 1. If user-specific annotation file exists, try that first
-#     if os.path.exists(out_path):
-#         raw = load_json(out_path)
-#         pairs = load_pairs_from_any(raw)
-#         if pairs:
-#             return pairs, out_path
-#         else:
-#             st.warning(
-#                 "⚠️ Le fichier d’annotations de l’utilisateur existe mais ne contient aucune paire "
-#                 "(format inattendu ou vide). Utilisation du jeu de données original."
-#             )
-
-#     # 2. Fallback to original dataset
-#     if not os.path.exists(data_path):
-#         st.error(f"❌ Fichier de données introuvable : {data_path}")
-#         return [], out_path
-
-#     raw = load_json(data_path)
-#     pairs = load_pairs_from_any(raw)
-#     if not pairs:
-#         st.error("❌ Aucune paire valide trouvée dans le jeu de données.")
-#         return [], out_path
-
-#     return pairs, out_path
-
-# def load_pairs_for_view_or_iaa(path):
-#     """
-#     Used in view_page() and iaa_page() to load any annotated file safely.
-#     Returns a list of pairs.
-#     """
-#     raw = load_json(path)
-#     return load_pairs_from_any(raw)
-
-# # =========================
-# # Pages
-# # =========================
-
-# def login_page():
-#     load_custom_css()
-    
-#     st.markdown("<div style='height: 3rem'></div>", unsafe_allow_html=True)
-    
-#     col1, col2, col3 = st.columns([1, 1.2, 1])
-#     with col2:
-#         st.markdown("""
-#         <div class="login-box">
-#             <div class="login-logo">
-#                 <div class="icon">🔗</div>
-#                 <h1>CausaFr</h1>
-#                 <p>Annotation de Relations Causales</p>
-#             </div>
-#         </div>
-#         """, unsafe_allow_html=True)
-        
-#         with st.form("login"):
-#             username = st.text_input("👤 Identifiant", placeholder="Votre nom d'utilisateur")
-#             password = st.text_input("🔒 Mot de passe", type="password", placeholder="Votre mot de passe")
-            
-#             st.markdown("<div style='height: 0.5rem'></div>", unsafe_allow_html=True)
-            
-#             if st.form_submit_button("Se connecter", use_container_width=True, type="primary"):
-#                 if verify_user(username, password):
-#                     st.session_state.authenticated = True
-#                     st.session_state.username = username
-#                     st.session_state.login_time = datetime.now().isoformat()
-#                     st.rerun()
-#                 else:
-#                     st.error("❌ Identifiants incorrects")
-
-# def logout():
-#     for key in ['authenticated', 'username', 'login_time', 'pair_index', 'current_dataset']:
-#         st.session_state.pop(key, None)
-#     st.rerun()
-
-# def annotate_page(username, file_name):
-#     # Load data safely
-#     pairs, out_path = load_pairs_for_user(username, file_name)
-#     if not pairs:
-#         st.error("❌ Aucune paire trouvée pour l'annotation.")
-#         return
-    
-#     # Progress management
-#     user_prog = get_user_progress(username, file_name)
-#     if st.session_state.get("current_dataset") != file_name:
-#         st.session_state.current_dataset = file_name
-#         st.session_state.pair_index = user_prog["current_index"]
-    
-#     if "pair_index" not in st.session_state:
-#         st.session_state.pair_index = user_prog["current_index"]
-    
-#     total = len(pairs)
-#     st.session_state.pair_index = max(0, min(st.session_state.pair_index, total - 1))
-#     idx = st.session_state.pair_index
-#     pair = pairs[idx]
-#     stats = compute_stats(pairs)
-    
-#     # Sidebar
-#     with st.sidebar:
-#         st.markdown("### 📊 Statistiques")
-#         col1, col2 = st.columns(2)
-#         with col1:
-#             st.metric("Total", stats["total"])
-#             st.metric("Causales", stats["causal"])
-#         with col2:
-#             st.metric("Annotées", stats["annotated"])
-#             st.metric("Taux", f"{stats['causal_rate']:.0f}%")
-        
-#         st.markdown("---")
-#         st.markdown("### 📍 Progression")
-#         render_progress(idx + 1, total)
-        
-#         st.markdown("---")
-#         st.markdown("### 🧭 Navigation")
-        
-#         jump = st.number_input("Aller à", 1, total, idx + 1, label_visibility="collapsed")
-#         col1, col2 = st.columns(2)
-#         with col1:
-#             if st.button("📍 Aller", use_container_width=True):
-#                 st.session_state.pair_index = int(jump) - 1
-#                 st.rerun()
-#         with col2:
-#             if st.button("⏭️ Non annotée", use_container_width=True):
-#                 for i, p in enumerate(pairs):
-#                     if not p.get("annotated_by"):
-#                         st.session_state.pair_index = i
-#                         st.rerun()
-#                         break
-    
-#     # Main content
-#     render_header(f"Paire {idx + 1} / {total}", f"📄 {file_name} • 👤 {pair.get('child_id', 'N/A')}")
-    
-#     if pair.get("annotated_by"):
-#         st.markdown(f"""
-#         <div class="alert warning">
-#             ✏️ <strong>Déjà annotée</strong> par {pair['annotated_by']} — {pair.get('annotated_at', '')[:16]}
-#         </div>
-#         """, unsafe_allow_html=True)
-    
-#     # Events
-#     col1, col2 = st.columns(2)
-    
-#     with col1:
-#         st.markdown("""
-#         <div class="event-box cause">
-#             <div class="label">🔵 Événement 1 — Cause potentielle</div>
-#         </div>
-#         """, unsafe_allow_html=True)
-#         e1_text = st.text_area("E1", pair.get("event1_text", ""), height=130, key=f"e1_{idx}", label_visibility="collapsed")
-#         e1_cue = st.checkbox("🏷️ Marqueur causal explicite", bool(pair.get("cue1", False)), key=f"c1_{idx}")
-    
-#     with col2:
-#         st.markdown("""
-#         <div class="event-box effect">
-#             <div class="label">🟢 Événement 2 — Effet potentiel</div>
-#         </div>
-#         """, unsafe_allow_html=True)
-#         e2_text = st.text_area("E2", pair.get("event2_text", ""), height=130, key=f"e2_{idx}", label_visibility="collapsed")
-#         e2_cue = st.checkbox("🏷️ Marqueur causal explicite", bool(pair.get("cue2", False)), key=f"c2_{idx}")
-    
-#     # Question
-#     st.markdown("""
-#     <div class="question-box">
-#         <h3>❓ Existe-t-il une relation CAUSALE ?</h3>
-#         <p>L'événement 1 cause-t-il ou contribue-t-il à l'événement 2 ?</p>
-#     </div>
-#     """, unsafe_allow_html=True)
-    
-#     col1, col2 = st.columns(2)
-#     with col1:
-#         current = pair.get("label", 0) or 0
-#         label = st.radio(
-#             "Label",
-#             [1, 0],
-#             index=0 if current == 1 else 1,
-#             format_func=lambda x: "✅ OUI — Causal" if x == 1 else "❌ NON — Pas causal",
-#             key=f"lbl_{idx}",
-#             horizontal=False,
-#             label_visibility="collapsed"
-#         )
-    
-#     with col2:
-#         confidence = st.slider("🎯 Confiance", 1, 5, int(pair.get("confidence", 3)), key=f"conf_{idx}")
-#         notes = st.text_input("📝 Notes", pair.get("notes", ""), key=f"note_{idx}", placeholder="Optionnel...")
-    
-#     st.markdown("---")
-    
-#     # Actions
-#     col1, col2, col3, col4 = st.columns([1, 2, 2, 1])
-    
-#     with col1:
-#         if st.button("⬅️", disabled=idx == 0, use_container_width=True):
-#             st.session_state.pair_index -= 1
-#             st.rerun()
-    
-#     with col2:
-#         if st.button("💾 Enregistrer & Suivant", type="primary", use_container_width=True):
-#             pair.update({
-#                 "event1_text": e1_text,
-#                 "event2_text": e2_text,
-#                 "cue1": int(bool(e1_cue)),
-#                 "cue2": int(bool(e2_cue)),
-#                 "label": int(label),
-#                 "confidence": int(confidence),
-#                 "notes": notes,
-#                 "annotated_by": username,
-#                 "annotated_at": datetime.now().isoformat()
-#             })
-#             pairs[idx] = pair
-
-#             # Always save as raw list (Format A)
-#             save_json(out_path, pairs)
-
-#             count = sum(1 for p in pairs if p.get("annotated_by") == username)
-#             next_index = min(idx + 1, total - 1)
-#             save_progress(username, file_name, next_index, count)
-
-#             if idx < total - 1:
-#                 st.session_state.pair_index += 1
-#             st.rerun()
-    
-#     with col3:
-#         if st.button("⏭️ Passer", disabled=idx >= total - 1, use_container_width=True):
-#             st.session_state.pair_index += 1
-#             st.rerun()
-    
-#     with col4:
-#         if st.button("➡️", disabled=idx >= total - 1, use_container_width=True):
-#             st.session_state.pair_index += 1
-#             st.rerun()
-    
-#     # Download
-#     if os.path.exists(out_path):
-#         st.markdown("---")
-#         with open(out_path, "r", encoding="utf-8") as f:
-#             st.download_button(
-#                 "⬇️ Télécharger mes annotations",
-#                 f,
-#                 file_name=f"{file_name.replace('.json', '')}_{username}.json",
-#                 mime="application/json",
-#                 use_container_width=True
-#             )
-
-# def view_page():
-#     render_header("Fichiers d'Annotation", "Visualisez et téléchargez les annotations")
-    
-#     if not os.path.exists(OUT_DIR):
-#         st.info("📂 Aucun fichier trouvé")
-#         return
-    
-#     files = [f for f in os.listdir(OUT_DIR) if f.endswith("_annotated.json")]
-#     if not files:
-#         st.info("📂 Aucun fichier annoté")
-#         return
-    
-#     selected = st.selectbox("📁 Fichier", files)
-#     if not selected:
-#         return
-    
-#     data = load_pairs_for_view_or_iaa(os.path.join(OUT_DIR, selected))
-#     if not data:
-#         st.error("❌ Aucune paire valide dans ce fichier.")
-#         return
-    
-#     stats = compute_stats(data)
-#     render_metrics(stats)
-    
-#     st.markdown("---")
-    
-#     # Filters
-#     col1, col2, col3 = st.columns(3)
-#     with col1:
-#         f_label = st.selectbox("🏷️ Label", ["Tous", "Causal", "Non causal", "Non annoté"])
-#     with col2:
-#         annotators = sorted({p.get("annotated_by") for p in data if p.get("annotated_by")})
-#         f_ann = st.selectbox("👤 Annotateur", ["Tous"] + annotators)
-#     with col3:
-#         f_cue = st.selectbox("🔍 Marqueur", ["Tous", "Avec", "Sans"])
-    
-#     filtered = data
-#     if f_label == "Causal":
-#         filtered = [p for p in filtered if p.get("label") == 1]
-#     elif f_label == "Non causal":
-#         filtered = [p for p in filtered if p.get("label") == 0]
-#     elif f_label == "Non annoté":
-#         filtered = [p for p in filtered if not p.get("annotated_by")]
-    
-#     if f_ann != "Tous":
-#         filtered = [p for p in filtered if p.get("annotated_by") == f_ann]
-    
-#     if f_cue == "Avec":
-#         filtered = [p for p in filtered if p.get("cue1") or p.get("cue2")]
-#     elif f_cue == "Sans":
-#         filtered = [p for p in filtered if not p.get("cue1") and not p.get("cue2")]
-    
-#     st.caption(f"📋 {len(filtered)} paires")
-    
-#     for i, p in enumerate(filtered[:50]):
-#         icon = "✅" if p.get("label") == 1 else "❌" if p.get("label") == 0 else "❓"
-#         e1_full = p.get("event1_text", "") or ""
-#         e2_full = p.get("event2_text", "") or ""
-#         e1 = (e1_full[:45] + "...") if len(e1_full) > 45 else e1_full
-#         e2 = (e2_full[:45] + "...") if len(e2_full) > 45 else e2_full
-        
-#         with st.expander(f"{icon} {e1} → {e2}"):
-#             col1, col2 = st.columns(2)
-#             with col1:
-#                 st.markdown(f"**🔵 E1:** {e1_full or 'N/A'}")
-#             with col2:
-#                 st.markdown(f"**🟢 E2:** {e2_full or 'N/A'}")
-#             if p.get("annotated_by"):
-#                 st.caption(f"👤 {p['annotated_by']} • 🎯 {p.get('confidence', '?')}/5")
-    
-#     if len(filtered) > 50:
-#         st.warning("⚠️ 50 premières paires affichées")
-    
-#     st.markdown("---")
-#     with open(os.path.join(OUT_DIR, selected), "r", encoding="utf-8") as f:
-#         st.download_button(
-#             "⬇️ Télécharger",
-#             f,
-#             selected,
-#             "application/json",
-#             use_container_width=True
-#         )
-
-# def iaa_page():
-#     render_header("Accord Inter-Annotateurs", "Analyse de la cohérence des annotations")
-    
-#     if not os.path.exists(OUT_DIR):
-#         st.info("📂 Aucun fichier")
-#         return
-    
-#     files = [f for f in os.listdir(OUT_DIR) if f.endswith("_annotated.json")]
-#     if len(files) < 2:
-#         st.info("ℹ️ 2 fichiers minimum requis")
-#         return
-    
-#     # Group by dataset
-#     datasets = {}
-#     for f in files:
-#         parts = f.replace("_annotated.json", "").rsplit("_", 1)
-#         if len(parts) == 2:
-#             ds, ann = parts
-#             datasets.setdefault(ds, []).append((ann, f))
-    
-#     multi = {k: v for k, v in datasets.items() if len(v) >= 2}
-#     if not multi:
-#         st.warning("⚠️ Aucun jeu avec plusieurs annotateurs")
-#         return
-    
-#     selected = st.selectbox("📁 Jeu de données", list(multi.keys()))
-#     if not selected:
-#         return
-    
-#     annotators = multi[selected]
-#     st.success(f"👥 Annotateurs : {', '.join(a[0] for a in annotators)}")
-    
-#     # Load annotations
-#     all_ann = {}
-#     all_data = {}
-
-#     for ann, fname in annotators:
-#         path = os.path.join(OUT_DIR, fname)
-#         data = load_pairs_for_view_or_iaa(path)
-#         all_data[ann] = data
-
-#         # Key by (event1_id, event2_id) if available, else by index
-#         key_to_label = {}
-#         for i, p in enumerate(data):
-#             if p.get("annotated_by") != ann:
-#                 # ignore unowned pairs if ever mixed
-#                 continue
-#             e1_id = p.get("event1_id", i)
-#             e2_id = p.get("event2_id", i)
-#             key_to_label[(e1_id, e2_id)] = p.get("label")
-#         all_ann[ann] = key_to_label
-    
-#     st.markdown("---")
-#     st.markdown("### 📊 Kappa de Cohen")
-    
-#     names = list(all_ann.keys())
-#     for i, a1 in enumerate(names):
-#         for a2 in names[i+1:]:
-#             common = set(all_ann[a1].keys()) & set(all_ann[a2].keys())
-#             valid = [k for k in common
-#                      if all_ann[a1][k] is not None and all_ann[a2][k] is not None]
-            
-#             if len(valid) < 10:
-#                 st.warning(f"⚠️ {a1} ↔ {a2} : {len(valid)} paires (min 10)")
-#                 continue
-            
-#             l1 = [all_ann[a1][k] for k in valid]
-#             l2 = [all_ann[a2][k] for k in valid]
-            
-#             po = sum(x == y for x, y in zip(l1, l2)) / len(l1)
-#             p1 = sum(l1) / len(l1)
-#             p2 = sum(l2) / len(l2)
-#             pe = p1 * p2 + (1 - p1) * (1 - p2)
-#             kappa = (po - pe) / (1 - pe) if pe < 1 else 1.0
-            
-#             render_kappa(a1, a2, kappa, po * 100, len(valid))
-    
-#     # Disagreements
-#     st.markdown("---")
-#     st.markdown("### 🔍 Désaccords")
-    
-#     if len(names) >= 2:
-#         a1, a2 = names[0], names[1]
-#         common = set(all_ann[a1].keys()) & set(all_ann[a2].keys())
-        
-#         disagree = []
-#         # Build a map from key -> pair object for one annotator
-#         index_map = {}
-#         for i, p in enumerate(all_data[a1]):
-#             e1_id = p.get("event1_id", i)
-#             e2_id = p.get("event2_id", i)
-#             index_map[(e1_id, e2_id)] = p
-        
-#         for k in common:
-#             if (all_ann[a1][k] is not None and
-#                 all_ann[a2][k] is not None and
-#                 all_ann[a1][k] != all_ann[a2][k]):
-#                 p = index_map.get(k)
-#                 if p:
-#                     disagree.append((p, all_ann[a1][k], all_ann[a2][k]))
-        
-#         if disagree:
-#             st.warning(f"⚠️ {len(disagree)} désaccords entre {a1} et {a2}")
-#             for i, (p, l1, l2) in enumerate(disagree[:10]):
-#                 with st.expander(f"Désaccord {i+1}"):
-#                     st.markdown(f"**E1:** {p.get('event1_text', '')}")
-#                     st.markdown(f"**E2:** {p.get('event2_text', '')}")
-#                     col1, col2 = st.columns(2)
-#                     with col1:
-#                         st.markdown(f"**{a1}:** {'✅' if l1 == 1 else '❌'}")
-#                     with col2:
-#                         st.markdown(f"**{a2}:** {'✅' if l2 == 1 else '❌'}")
-#         else:
-#             st.success("✅ Aucun désaccord !")
-
-# # =========================
-# # Main
-# # =========================
-
-# def main():
-#     st.set_page_config("CausaFr", "🔗", "wide", "expanded")
-#     load_custom_css()
-    
-#     if not st.session_state.get("authenticated"):
-#         login_page()
-#         return
-    
-#     # Sidebar
-#     with st.sidebar:
-#         st.markdown(f"""
-#         <div style="text-align: center; padding: 1.5rem 0;">
-#             <div style="font-size: 2.5rem;">🔗</div>
-#             <h2 style="margin: 0.5rem 0 0 0;">CausaFr</h2>
-#         </div>
-#         """, unsafe_allow_html=True)
-        
-#         st.markdown("---")
-        
-#         st.markdown(f"""
-#         <div style="background: rgba(255,255,255,0.08); padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 1rem;">
-#             👤 <strong>{st.session_state.username}</strong>
-#         </div>
-#         """, unsafe_allow_html=True)
-        
-#         if st.button("🚪 Déconnexion", use_container_width=True):
-#             logout()
-        
-#         st.markdown("---")
-        
-#         mode = st.radio("Mode", ["✏️ Annoter", "📂 Voir", "📊 IAA"], label_visibility="collapsed")
-    
-#     # Content
-#     if mode == "✏️ Annoter":
-#         with st.sidebar:
-#             st.markdown("### 📁 Données")
-#             if not os.path.exists(DATA_DIR):
-#                 st.error("Dossier data/ manquant")
-#                 return
-            
-#             datasets = [f for f in os.listdir(DATA_DIR) if f.endswith(".json")]
-#             if not datasets:
-#                 st.error("Aucun JSON")
-#                 return
-            
-#             file = st.selectbox("Fichier", datasets, label_visibility="collapsed")
-#             prog = get_user_progress(st.session_state.username, file)
-#             if prog["current_index"] > 0:
-#                 st.info(f"📍 Paire {prog['current_index'] + 1}")
-        
-#         annotate_page(st.session_state.username, file)
-    
-#     elif mode == "📂 Voir":
-#         view_page()
-    
-#     elif mode == "📊 IAA":
-#         iaa_page()
-
-# if __name__ == "__main__":
-#     main()
-
-
 """
-CausaFr - Outil d'Annotation Professionnelle
-=============================================
-Interface moderne et professionnelle pour l'annotation de relations causales.
-
-Lancer avec: streamlit run causafr_annotation_app.py
+CausaFr - Complete Google Sheets Annotation Tool
+Datasets and annotations all stored in Google Sheets
 """
 
 import streamlit as st
+import pandas as pd
 import json
 import os
 import hashlib
-import shutil
+import uuid
+import re
 from datetime import datetime
+from typing import Dict, List, Optional, Any
+from dataclasses import dataclass, asdict
+from io import StringIO
 
-# =========================
-# Configuration
-# =========================
+# =============================================================================
+# GOOGLE SHEETS CONFIGURATION
+# =============================================================================
 
-DATA_DIR = "data"
-OUT_DIR = "output"
-BACKUP_DIR = os.path.join(OUT_DIR, "backups")
-USERS_FILE = "users.json"
-PROGRESS_FILE = "annotation_progress.json"
+GOOGLE_CONFIG = {
+    'spreadsheet_id': "1K4zUiRVOnyDuEAjzoZ5qb7B5fg9dKOdaJJjbQfDsBKw",
+    'gcp_credentials': {
+        'type': "service_account",
+        'project_id': "machine-translation-375907",
+        'private_key_id': "887c96056fc68e0e2eb9b740176735bfe7db003f",
+        'private_key': """-----BEGIN PRIVATE KEY-----
+MIIEvwIBADANBgkqhkiG9w0BAQEFAASCBKkwggSlAgEAAoIBAQCSWZ9wD1lxSVls
+Iy/olVuIDnDGbttm16jBqFlRXHDmBn5yn7YuCRoKlqoCadJL/7MuE+xPiS17WYI3
+IhcWssMJfdD2DMYk+F0wGdS2FZUzNrIqWg+NiX/mUs8U3/kytxBqK8kpi1yrr/b0
+sTi1ZmvJd60f8o5UcCQ2CLbI6VZhH0shmE07q1wO8yMz4HnbSHyTyFizWxFCXqMN
+0Y6+WPBUsfj7G5pcNFtyHAsqIzoEFRuScebrPHrB2f2uvznnuODxUSJKKr+I/9NE
+dcExK3vdKvKWz84lGxxeVL5Jdw0SCH9zJFbrG/YxJixBYPtc/QsbjHs/pnoiS/tl
+aRvJQU/tAgMBAAECggEACdE1wwpgjVsmgrzEhrVYL8MKOSFwGdC/Kwh8P1s0XpXS
+byV8DtAA/XNYYbOQDhWPwzhGappw4NyjAchJZLYmo7EbLpoyQ4IenC6raHB/svEJ
+GBK1BuFRoVVuO0AAAzEpCno38w+8bm7uIcFupKqDcf8Tb7hxaEQihbZlbopKh1a8
+VVDR5AS1Cy1rPRDphckYPH+MNN/VO5AWUsV1hoEMY7b2G+mADUduzdAAyeHGH2Te
+GlRs4+I02PdDHokMZRej4lbo5CkUQ5YlwoV9zJ3PJBHRatpGWfQ0XGxynTINRGbJ
+IU/bmjA8xXbYC7FESkPBaFVdQMY/kthcFRAbg/qKsQKBgQDGTcxZp+iVv/l1hvPa
+4LdPdvEO8nSdeYuJ/4q0dg0zny+xoaBAKhyqYUWAsYIhU2pTHmQteffEYmxEG2GO
+KttH//1klVsltk+sjKYiAGdHFj4ErEqeQKpV+d8ybiFL6mtbux+AHhmFhhA5U1s9
+t5SyQp46FZG5y1r5BdwN1T9F0QKBgQC87iqnJK28I6c9/QrAKMCavhT1NLwcnjln
+EKXXCcP6CmAXsciRvyx1/YB7xkNBloHYs/YC6ZzVDPsmSn55SVyLGW50scyXf6e7
+Lw3s5OJxQemnk76ExBM8pyynJPk6FvEmrtVmZZmNlUG9CNHfReBSq2+jyStW5D5y
+XxL3u5uDXQKBgQC2KgN9nLQY1EhpgTYDrAhYtC+PBoS/oEbh1uBpFETeVe4vJAUc
+zFKW5VI+fVHIIWN7xWBLMk67lZpVGj4MpivXwT3ZpyYax5X7MRzwASTedX01N7w4
+Ebknz6kMH4TwwwAqPQQb4gqZ0OSYdI1NbZXoBzBotSWv4jHIrmxOPMWp8QKBgQCr
+SOGylzZLk6dUM81DWa8Em8A0bpL8/xXbsuQniNr8Hdvwn2XPfRq5/hI2JRFkrScb
+aExpZ5KgNRydInx3SWN1WKEjeu6Zi0puEcL2OqxxMei73N6lT36BRq7c+lBZseL/
+xxIBu6rzCZaH4y8i1R8C1Bpqyz9Xj6Zt2nQ/1P6woQKBgQCePFKM+mTxpeADpVEF
+pnGN3cQJGvC22FyjIhOOXI5JfkgzL/Ae2Q40/t15WrW/Q3737YxEm7vPbfZDfajQ
+nDpTfKxIe9mDB/MBi7IQjzwdhCdMj7gzk2TPM2XflK3CsWOtQiKYAak6QJJXjKzz
+I7HHSEOBRuAsvaYHD7nOg6KdMg==
+-----END PRIVATE KEY-----""",
+        'client_email': "annotation-bot@machine-translation-375907.iam.gserviceaccount.com",
+        'client_id': "107890068241269374646",
+        'auth_uri': "https://accounts.google.com/o/oauth2/auth",
+        'token_uri': "https://oauth2.googleapis.com/token",
+        'auth_provider_x509_cert_url': "https://www.googleapis.com/oauth2/v1/certs",
+        'client_x509_cert_url': "https://www.googleapis.com/robot/v1/metadata/x509/annotation-bot%40machine-translation-375907.iam.gserviceaccount.com"
+    }
+}
 
-# Créer les dossiers nécessaires
-os.makedirs(DATA_DIR, exist_ok=True)
-os.makedirs(OUT_DIR, exist_ok=True)
-os.makedirs(BACKUP_DIR, exist_ok=True)
+# =============================================================================
+# DATA MODELS
+# =============================================================================
 
-# =========================
-# Styles CSS Professionnels
-# =========================
+@dataclass
+class Annotation:
+    """Data model for an annotation"""
+    id: str
+    pair_id: str
+    dataset: str
+    username: str
+    event1_text: str
+    event2_text: str
+    cue1: int = 0
+    cue2: int = 0
+    label: Optional[int] = None
+    confidence: int = 3
+    notes: str = ""
+    annotated_at: str = ""
+    event1_id: str = ""
+    event2_id: str = ""
 
-def load_custom_css():
-    st.markdown("""
-    <style>
-    /* === IMPORTS === */
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-    
-    /* === VARIABLES === */
-    :root {
-        --primary: #6366F1;
-        --primary-dark: #4F46E5;
-        --success: #10B981;
-        --warning: #F59E0B;
-        --error: #EF4444;
-        --bg-dark: #0F172A;
-        --bg-card: #FFFFFF;
-        --text-primary: #1E293B;
-        --text-muted: #64748B;
-        --border: #E2E8F0;
-        --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-        --radius: 12px;
-    }
-    
-    /* === GLOBAL === */
-    .main .block-container {
-        padding: 1.5rem 2rem 3rem 2rem;
-        max-width: 1200px;
-    }
-    
-    h1, h2, h3, h4 { font-family: 'Inter', sans-serif !important; }
-    
-    /* === HEADER === */
-    .main-header {
-        background: linear-gradient(135deg, #6366F1 0%, #8B5CF6 50%, #A855F7 100%);
-        padding: 2rem 2.5rem;
-        border-radius: 20px;
-        margin-bottom: 2rem;
-        position: relative;
-        overflow: hidden;
-    }
-    
-    .main-header::before {
-        content: '';
-        position: absolute;
-        top: 0; right: 0; bottom: 0; left: 0;
-        background: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.05'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
-        opacity: 0.5;
-    }
-    
-    .main-header h1 {
-        color: white !important;
-        font-weight: 700;
-        font-size: 1.75rem;
-        margin: 0;
-        position: relative;
-        z-index: 1;
-    }
-    
-    .main-header p {
-        color: rgba(255,255,255,0.9);
-        margin: 0.5rem 0 0 0;
-        font-size: 0.95rem;
-        position: relative;
-        z-index: 1;
-    }
-    
-    /* === CARDS === */
-    .card {
-        background: white;
-        border-radius: var(--radius);
-        padding: 1.5rem;
-        box-shadow: var(--shadow);
-        border: 1px solid var(--border);
-        transition: transform 0.2s, box-shadow 0.2s;
-    }
-    
-    .card:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1);
-    }
-    
-    /* === EVENT BOXES === */
-    .event-box {
-        border-radius: var(--radius);
-        padding: 1rem 1.25rem;
-        margin-bottom: 0.75rem;
-        border-left: 4px solid;
-    }
-    
-    .event-box.cause {
-        background: linear-gradient(to right, #EFF6FF, #F8FAFC);
-        border-color: #3B82F6;
-    }
-    
-    .event-box.effect {
-        background: linear-gradient(to right, #ECFDF5, #F8FAFC);
-        border-color: #10B981;
-    }
-    
-    .event-box .label {
-        font-size: 0.7rem;
-        font-weight: 700;
-        text-transform: uppercase;
-        letter-spacing: 1px;
-        margin-bottom: 0.25rem;
-    }
-    
-    .event-box.cause .label { color: #1D4ED8; }
-    .event-box.effect .label { color: #059669; }
-    
-    /* === QUESTION BOX === */
-    .question-box {
-        background: linear-gradient(135deg, #EEF2FF 0%, #E0E7FF 100%);
-        border: 2px solid #C7D2FE;
-        border-radius: var(--radius);
-        padding: 1.5rem;
-        margin: 1.5rem 0;
-        text-align: center;
-    }
-    
-    .question-box h3 {
-        color: #4338CA;
-        font-size: 1.15rem;
-        margin: 0 0 0.5rem 0;
-    }
-    
-    .question-box p {
-        color: #6366F1;
-        margin: 0;
-        font-size: 0.9rem;
-    }
-    
-    /* === METRICS === */
-    .metric-grid {
-        display: grid;
-        grid-template-columns: repeat(4, 1fr);
-        gap: 1rem;
-        margin: 1.5rem 0;
-    }
-    
-    .metric-item {
-        background: white;
-        border-radius: var(--radius);
-        padding: 1.25rem;
-        text-align: center;
-        border: 1px solid var(--border);
-        transition: all 0.2s;
-    }
-    
-    .metric-item:hover {
-        border-color: var(--primary);
-        box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
-    }
-    
-    .metric-item .icon { font-size: 1.5rem; margin-bottom: 0.5rem; }
-    .metric-item .value { font-size: 1.75rem; font-weight: 700; color: var(--primary); }
-    .metric-item .label { font-size: 0.8rem; color: var(--text-muted); margin-top: 0.25rem; }
-    
-    /* === PROGRESS === */
-    .progress-wrapper {
-        background: var(--border);
-        border-radius: 999px;
-        height: 10px;
-        overflow: hidden;
-        margin: 1rem 0;
-    }
-    
-    .progress-fill {
-        height: 100%;
-        border-radius: 999px;
-        background: linear-gradient(90deg, #6366F1, #A855F7);
-        transition: width 0.5s ease;
-    }
-    
-    /* === BADGE === */
-    .badge {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.35rem;
-        padding: 0.35rem 0.85rem;
-        border-radius: 999px;
-        font-size: 0.75rem;
-        font-weight: 600;
-    }
-    
-    .badge.success { background: #D1FAE5; color: #065F46; }
-    .badge.warning { background: #FEF3C7; color: #92400E; }
-    .badge.info { background: #DBEAFE; color: #1E40AF; }
-    .badge.error { background: #FEE2E2; color: #991B1B; }
-    
-    /* === KAPPA RESULT === */
-    .kappa-card {
-        background: white;
-        border-radius: var(--radius);
-        padding: 1.25rem 1.5rem;
-        margin-bottom: 1rem;
-        border-left: 4px solid;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-    }
-    
-    .kappa-card.excellent { border-color: #10B981; }
-    .kappa-card.good { border-color: #3B82F6; }
-    .kappa-card.moderate { border-color: #F59E0B; }
-    .kappa-card.poor { border-color: #EF4444; }
-    
-    .kappa-value {
-        font-size: 1.75rem;
-        font-weight: 700;
-    }
-    
-    .kappa-card.excellent .kappa-value { color: #10B981; }
-    .kappa-card.good .kappa-value { color: #3B82F6; }
-    .kappa-card.moderate .kappa-value { color: #F59E0B; }
-    .kappa-card.poor .kappa-value { color: #EF4444; }
-    
-    /* === SIDEBAR === */
-    section[data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #1E293B 0%, #0F172A 100%);
-    }
-    
-    section[data-testid="stSidebar"] * {
-        color: #CBD5E1 !important;
-    }
-    
-    section[data-testid="stSidebar"] h1,
-    section[data-testid="stSidebar"] h2,
-    section[data-testid="stSidebar"] h3,
-    section[data-testid="stSidebar"] strong {
-        color: white !important;
-    }
-    
-    section[data-testid="stSidebar"] .stButton button {
-        background: rgba(255,255,255,0.1);
-        border: 1px solid rgba(255,255,255,0.2);
-        color: white !important;
-    }
-    
-    section[data-testid="stSidebar"] .stButton button:hover {
-        background: rgba(255,255,255,0.2);
-        border-color: rgba(255,255,255,0.3);
-    }
-    
-    /* === BUTTONS === */
-    .stButton button {
-        font-family: 'Inter', sans-serif;
-        font-weight: 500;
-        border-radius: 8px;
-        transition: all 0.2s;
-    }
-    
-    .stButton button:hover {
-        transform: translateY(-1px);
-    }
-    
-    .stButton button[kind="primary"] {
-        background: linear-gradient(135deg, #6366F1, #8B5CF6);
-        border: none;
-    }
-    
-    .stButton button[kind="primary"]:hover {
-        background: linear-gradient(135deg, #4F46E5, #7C3AED);
-        box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
-    }
-    
-    /* === ALERT BOX === */
-    .alert {
-        padding: 1rem 1.25rem;
-        border-radius: 8px;
-        margin-bottom: 1rem;
-        border-left: 4px solid;
-    }
-    
-    .alert.info { background: #EFF6FF; border-color: #3B82F6; color: #1E40AF; }
-    .alert.success { background: #ECFDF5; border-color: #10B981; color: #065F46; }
-    .alert.warning { background: #FFFBEB; border-color: #F59E0B; color: #92400E; }
-    .alert.error { background: #FEF2F2; border-color: #EF4444; color: #991B1B; }
-    
-    /* === HIDE STREAMLIT === */
-    #MainMenu, footer, header { visibility: hidden; }
-    
-    /* === EXPANDER === */
-    .streamlit-expanderHeader {
-        font-family: 'Inter', sans-serif;
-        font-weight: 500;
-        background: #F8FAFC;
-        border-radius: 8px;
-        border: 1px solid var(--border);
-    }
-    
-    /* === LOGIN === */
-    .login-box {
-        max-width: 380px;
-        margin: 0 auto;
-        padding: 2.5rem;
-        background: white;
-        border-radius: 20px;
-        box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.15);
-    }
-    
-    .login-logo {
-        text-align: center;
-        margin-bottom: 2rem;
-    }
-    
-    .login-logo .icon { font-size: 3.5rem; }
-    .login-logo h1 { font-size: 1.5rem; margin: 0.5rem 0 0 0; color: #1E293B; }
-    .login-logo p { color: #64748B; font-size: 0.9rem; margin: 0.25rem 0 0 0; }
-    </style>
-    """, unsafe_allow_html=True)
+@dataclass
+class DatasetPair:
+    """Data model for a dataset pair"""
+    pair_id: str
+    dataset: str
+    event1_text: str
+    event2_text: str
+    event1_id: str = ""
+    event2_id: str = ""
+    metadata: str = "{}"
 
-# =========================
-# Composants UI
-# =========================
+# =============================================================================
+# GOOGLE SHEETS MANAGER
+# =============================================================================
 
-def render_header(title, subtitle=None):
-    sub_html = f"<p>{subtitle}</p>" if subtitle else ""
-    st.markdown(f"""
-    <div class="main-header">
-        <h1>🔗 {title}</h1>
-        {sub_html}
-    </div>
-    """, unsafe_allow_html=True)
+try:
+    import gspread
+    from google.oauth2.service_account import Credentials
+    from google.auth.exceptions import GoogleAuthError
+    GSHEETS_AVAILABLE = True
+except ImportError:
+    GSHEETS_AVAILABLE = False
+    st.error("⚠️ Install dependencies: pip install gspread google-auth")
 
-def render_metrics(stats):
-    st.markdown(f"""
-    <div class="metric-grid">
-        <div class="metric-item">
-            <div class="icon">📊</div>
-            <div class="value">{stats['total']}</div>
-            <div class="label">Total</div>
-        </div>
-        <div class="metric-item">
-            <div class="icon">✏️</div>
-            <div class="value">{stats['annotated']}</div>
-            <div class="label">Annotées</div>
-        </div>
-        <div class="metric-item">
-            <div class="icon">✅</div>
-            <div class="value">{stats['causal']}</div>
-            <div class="label">Causales</div>
-        </div>
-        <div class="metric-item">
-            <div class="icon">❌</div>
-            <div class="value">{stats['non_causal']}</div>
-            <div class="label">Non causales</div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-def render_progress(current, total):
-    pct = (current / total * 100) if total > 0 else 0
-    st.markdown(f"""
-    <div class="progress-wrapper">
-        <div class="progress-fill" style="width: {pct}%"></div>
-    </div>
-    <p style="text-align: center; color: #64748B; font-size: 0.85rem;">
-        <strong>{current}</strong> sur {total} ({pct:.1f}%)
-    </p>
-    """, unsafe_allow_html=True)
-
-def render_kappa(ann1, ann2, kappa, agreement, count):
-    if kappa >= 0.8:
-        level, label = "excellent", "Excellent"
-    elif kappa >= 0.6:
-        level, label = "good", "Bon"
-    elif kappa >= 0.4:
-        level, label = "moderate", "Modéré"
-    else:
-        level, label = "poor", "Faible"
+class GoogleSheetsManager:
+    """Complete Google Sheets management"""
     
-    st.markdown(f"""
-    <div class="kappa-card {level}">
-        <div>
-            <strong style="font-size: 1.1rem;">{ann1} ↔ {ann2}</strong>
-            <br><span style="color: #64748B; font-size: 0.85rem;">{count} paires • Accord : {agreement:.1f}%</span>
-        </div>
-        <div style="text-align: right;">
-            <div class="kappa-value">κ = {kappa:.3f}</div>
-            <span class="badge {level}">{label}</span>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-# =========================
-# Utilitaires
-# =========================
-
-def load_json(path):
-    """Charge un fichier JSON de manière robuste"""
-    if not os.path.exists(path):
-        return None
-    
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except json.JSONDecodeError as e:
-        st.error(f"Erreur JSON dans {path}: {e}")
-        return None
-    except Exception as e:
-        st.error(f"Erreur de lecture {path}: {e}")
-        return None
-
-def save_json(path, data):
-    """Sauvegarde un fichier JSON avec backup automatique"""
-    # Créer un backup avant d'écraser
-    if os.path.exists(path):
-        backup_path = f"{path}.backup.{datetime.now().strftime('%Y%m%d%H%M%S')}"
+    def __init__(self):
+        self.client = None
+        self.spreadsheet = None
+        self.connected = False
+        self.error_message = ""
+        
+        # Sheet references
+        self.users_sheet = None
+        self.annotations_sheet = None
+        self.progress_sheet = None
+        self.datasets_sheet = None
+        self.dataset_pairs_sheet = None
+        
+    def connect(self) -> bool:
+        """Connect to Google Sheets"""
         try:
-            shutil.copy2(path, backup_path)
-        except:
-            pass
+            # Fix private key formatting
+            creds = GOOGLE_CONFIG['gcp_credentials'].copy()
+            private_key = creds['private_key']
+            
+            # Ensure proper newlines
+            private_key = private_key.replace('\\n', '\n')
+            if not private_key.startswith('-----BEGIN PRIVATE KEY-----'):
+                private_key = '-----BEGIN PRIVATE KEY-----\n' + private_key
+            if not private_key.endswith('-----END PRIVATE KEY-----'):
+                private_key = private_key + '\n-----END PRIVATE KEY-----'
+            
+            creds['private_key'] = private_key
+            
+            # Create credentials
+            credentials = Credentials.from_service_account_info(
+                creds,
+                scopes=[
+                    'https://www.googleapis.com/auth/spreadsheets',
+                    'https://www.googleapis.com/auth/drive.file'
+                ]
+            )
+            
+            # Authorize
+            self.client = gspread.authorize(credentials)
+            
+            # Open spreadsheet
+            spreadsheet_id = GOOGLE_CONFIG['spreadsheet_id']
+            self.spreadsheet = self.client.open_by_key(spreadsheet_id)
+            
+            # Setup all sheets
+            self._setup_sheets()
+            
+            self.connected = True
+            return True
+            
+        except Exception as e:
+            self.error_message = f"Connection error: {str(e)}"
+            return False
     
-    # Sauvegarder le nouveau fichier
-    try:
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False, default=str)
-        return True
-    except Exception as e:
-        st.error(f"Erreur de sauvegarde {path}: {e}")
-        return False
-
-def hash_password(password):
-    return hashlib.sha256(password.encode()).hexdigest()
-
-def load_users():
-    return load_json(USERS_FILE) if os.path.exists(USERS_FILE) else {}
-
-def verify_user(username, password):
-    users = load_users()
-    if username in users:
-        stored = users[username]
-        # Vérifier le hash ou le mot de passe en clair (rétrocompatibilité)
-        if len(stored) == 64:  # Hash SHA256
-            return stored == hash_password(password)
-        return stored == password
-    return False
-
-# =========================
-# Gestion des Annotations
-# =========================
-
-def get_annotation_filename(username, dataset):
-    """Retourne le nom du fichier d'annotations pour un utilisateur"""
-    base_name = dataset.replace(".json", "")
-    return f"{base_name}_{username}.json"
-
-def get_user_annotation_path(username, dataset):
-    """Retourne le chemin complet du fichier d'annotations utilisateur"""
-    filename = get_annotation_filename(username, dataset)
-    return os.path.join(OUT_DIR, filename)
-
-def get_user_progress_filename(username):
-    """Retourne le nom du fichier de progression utilisateur"""
-    return f"{username}_progress.json"
-
-def get_user_progress_path(username):
-    """Retourne le chemin complet du fichier de progression utilisateur"""
-    filename = get_user_progress_filename(username)
-    return os.path.join(OUT_DIR, filename)
-
-def verify_annotations_integrity(username, dataset):
-    """Vérifie l'intégrité des annotations existantes"""
-    annotation_path = get_user_annotation_path(username, dataset)
-    
-    if not os.path.exists(annotation_path):
-        return True  # Pas d'annotations existantes
-    
-    try:
-        data = load_json(annotation_path)
-        if data is None:
-            return False  # Fichier corrompu
+    def _setup_sheets(self):
+        """Create or get all necessary worksheets"""
+        sheet_titles = [ws.title for ws in self.spreadsheet.worksheets()]
         
-        # Vérifier le format
-        if isinstance(data, list):
-            return len(data) > 0
-        elif isinstance(data, dict) and "pairs" in data:
-            return isinstance(data["pairs"], list) and len(data["pairs"]) > 0
-        
-        return False
-    except Exception:
-        return False
-
-def load_pairs_for_user(username, dataset):
-    """
-    Charge les paires pour un utilisateur spécifique.
-    Priorité : annotations utilisateur > dataset original
-    """
-    # Chemins des fichiers
-    data_path = os.path.join(DATA_DIR, dataset)
-    user_annotation_path = get_user_annotation_path(username, dataset)
-    
-    # 1. Vérifier l'intégrité des annotations existantes
-    if os.path.exists(user_annotation_path):
-        if not verify_annotations_integrity(username, dataset):
-            st.warning("⚠️ Annotations précédentes corrompues. Réinitialisation...")
-            # Créer une sauvegarde du fichier corrompu
-            corrupt_backup = f"{user_annotation_path}.corrupt.{datetime.now().strftime('%Y%m%d%H%M%S')}"
-            try:
-                shutil.move(user_annotation_path, corrupt_backup)
-            except:
-                os.remove(user_annotation_path)
+        # 1. USERS sheet
+        if 'users' not in sheet_titles:
+            self.users_sheet = self.spreadsheet.add_worksheet('users', 100, 5)
+            self.users_sheet.update('A1:E1', [
+                ['username', 'password_hash', 'email', 'created_at', 'last_login']
+            ])
         else:
-            # Charger les annotations existantes
-            data = load_json(user_annotation_path)
-            if data is not None:
-                if isinstance(data, list):
-                    st.success(f"✅ Annotations chargées ({len(data)} paires)")
-                    return data, user_annotation_path
-                elif isinstance(data, dict) and "pairs" in data:
-                    pairs = data["pairs"]
-                    if isinstance(pairs, list):
-                        st.success(f"✅ Annotations chargées ({len(pairs)} paires)")
-                        return pairs, user_annotation_path
+            self.users_sheet = self.spreadsheet.worksheet('users')
+        
+        # 2. DATASETS sheet (dataset metadata)
+        if 'datasets' not in sheet_titles:
+            self.datasets_sheet = self.spreadsheet.add_worksheet('datasets', 100, 6)
+            self.datasets_sheet.update('A1:F1', [
+                ['dataset_id', 'name', 'description', 'created_by', 'created_at', 'pair_count']
+            ])
+        else:
+            self.datasets_sheet = self.spreadsheet.worksheet('datasets')
+        
+        # 3. DATASET_PAIRS sheet (actual pairs data)
+        if 'dataset_pairs' not in sheet_titles:
+            self.dataset_pairs_sheet = self.spreadsheet.add_worksheet('dataset_pairs', 10000, 8)
+            self.dataset_pairs_sheet.update('A1:H1', [
+                ['pair_id', 'dataset', 'event1_text', 'event2_text', 
+                 'event1_id', 'event2_id', 'metadata', 'row_index']
+            ])
+        else:
+            self.dataset_pairs_sheet = self.spreadsheet.worksheet('dataset_pairs')
+        
+        # 4. ANNOTATIONS sheet
+        if 'annotations' not in sheet_titles:
+            self.annotations_sheet = self.spreadsheet.add_worksheet('annotations', 10000, 15)
+            headers = [
+                'id', 'pair_id', 'dataset', 'username', 'event1_text', 'event2_text',
+                'cue1', 'cue2', 'label', 'confidence', 'notes', 'annotated_at',
+                'event1_id', 'event2_id', 'exported'
+            ]
+            self.annotations_sheet.update('A1:O1', [headers])
+        else:
+            self.annotations_sheet = self.spreadsheet.worksheet('annotations')
+        
+        # 5. PROGRESS sheet
+        if 'progress' not in sheet_titles:
+            self.progress_sheet = self.spreadsheet.add_worksheet('progress', 100, 6)
+            self.progress_sheet.update('A1:F1', [
+                ['username', 'dataset', 'current_index', 'total_annotated', 
+                 'last_updated', 'last_pair_id']
+            ])
+        else:
+            self.progress_sheet = self.spreadsheet.worksheet('progress')
     
-    # 2. Charger le dataset original
-    if not os.path.exists(data_path):
-        st.error(f"❌ Fichier de données introuvable : {data_path}")
-        return [], user_annotation_path
+    # ========== USER MANAGEMENT ==========
     
-    data = load_json(data_path)
-    if data is None:
-        st.error("❌ Impossible de charger le dataset original")
-        return [], user_annotation_path
-    
-    # Extraire les paires selon le format
-    if isinstance(data, list):
-        pairs = data.copy()
-    elif isinstance(data, dict) and "pairs" in data:
-        pairs = data["pairs"].copy()
-    else:
-        st.error("❌ Format de données invalide")
-        return [], user_annotation_path
-    
-    # Initialiser les champs d'annotation
-    for i, pair in enumerate(pairs):
-        pair.setdefault("annotated_by", "")
-        pair.setdefault("annotated_at", "")
-        pair.setdefault("label", None)
-        pair.setdefault("confidence", 3)
-        pair.setdefault("notes", "")
-        pair.setdefault("cue1", 0)
-        pair.setdefault("cue2", 0)
-    
-    st.info(f"📄 Dataset original chargé ({len(pairs)} paires)")
-    return pairs, user_annotation_path
-
-def save_user_annotations(username, dataset, pairs):
-    """Sauvegarde les annotations de l'utilisateur"""
-    user_annotation_path = get_user_annotation_path(username, dataset)
-    
-    # Créer une sauvegarde avant de sauvegarder
-    backup_annotations(username, dataset, pairs)
-    
-    # Sauvegarder les annotations
-    success = save_json(user_annotation_path, pairs)
-    
-    if success:
-        # Mettre à jour la progression
-        update_user_progress(username, dataset, pairs)
-        st.toast("💾 Annotations sauvegardées", icon="✅")
-    
-    return success
-
-def backup_annotations(username, dataset, pairs):
-    """Crée une sauvegarde des annotations"""
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    backup_filename = f"{dataset.replace('.json', '')}_{username}_{timestamp}.json"
-    backup_path = os.path.join(BACKUP_DIR, backup_filename)
-    
-    # Sauvegarder la copie
-    save_json(backup_path, pairs)
-    
-    # Nettoyer les anciens backups (garder les 10 derniers)
-    backup_files = sorted(
-        [f for f in os.listdir(BACKUP_DIR) 
-         if f.startswith(f"{dataset.replace('.json', '')}_{username}")],
-        reverse=True
-    )
-    
-    for old_file in backup_files[10:]:
+    def create_user(self, username: str, password: str, email: str = "") -> bool:
+        """Create a new user"""
         try:
-            os.remove(os.path.join(BACKUP_DIR, old_file))
-        except:
-            pass
-
-def update_user_progress(username, dataset, pairs):
-    """Met à jour la progression de l'utilisateur"""
-    # Compter les annotations de cet utilisateur
-    user_annotations = [p for p in pairs if p.get("annotated_by") == username]
-    total_annotated = len(user_annotations)
+            users = self.users_sheet.get_all_records()
+            for user in users:
+                if user['username'] == username:
+                    return False
+            
+            self.users_sheet.append_row([
+                username,
+                hashlib.sha256(password.encode()).hexdigest(),
+                email,
+                datetime.now().isoformat(),
+                datetime.now().isoformat()
+            ])
+            return True
+        except Exception as e:
+            self.error_message = str(e)
+            return False
     
-    # Trouver le dernier index annoté
-    last_index = 0
-    for i, p in enumerate(pairs):
-        if p.get("annotated_by") == username:
-            last_index = i
+    def verify_user(self, username: str, password: str) -> bool:
+        """Verify user credentials"""
+        try:
+            users = self.users_sheet.get_all_records()
+            for user in users:
+                if user['username'] == username:
+                    return user['password_hash'] == hashlib.sha256(password.encode()).hexdigest()
+            return False
+        except Exception as e:
+            self.error_message = str(e)
+            return False
     
-    # Charger la progression existante
-    user_progress_path = get_user_progress_path(username)
-    user_progress = load_json(user_progress_path) or {}
+    # ========== DATASET MANAGEMENT ==========
     
-    # Mettre à jour
-    user_progress[dataset] = {
-        "current_index": last_index,
-        "total_annotated": total_annotated,
-        "last_updated": datetime.now().isoformat(),
-        "dataset": dataset,
-        "username": username
-    }
+    def create_dataset(self, dataset_id: str, name: str, description: str, 
+                      created_by: str, pairs: List[Dict]) -> bool:
+        """Create a new dataset in Google Sheets"""
+        try:
+            # Check if dataset exists
+            datasets = self.datasets_sheet.get_all_records()
+            for dataset in datasets:
+                if dataset['dataset_id'] == dataset_id:
+                    return False
+            
+            # Add dataset metadata
+            self.datasets_sheet.append_row([
+                dataset_id,
+                name,
+                description,
+                created_by,
+                datetime.now().isoformat(),
+                len(pairs)
+            ])
+            
+            # Add all pairs
+            for i, pair in enumerate(pairs):
+                self.dataset_pairs_sheet.append_row([
+                    pair.get('pair_id', f"{dataset_id}_{i}"),
+                    dataset_id,
+                    pair.get('event1_text', ''),
+                    pair.get('event2_text', ''),
+                    pair.get('event1_id', f"e1_{i}"),
+                    pair.get('event2_id', f"e2_{i}"),
+                    json.dumps(pair.get('metadata', {})),
+                    i  # row index for ordering
+                ])
+            
+            return True
+        except Exception as e:
+            self.error_message = str(e)
+            return False
     
-    # Sauvegarder la progression utilisateur
-    save_json(user_progress_path, user_progress)
+    def get_datasets(self) -> List[Dict]:
+        """Get all available datasets"""
+        try:
+            records = self.datasets_sheet.get_all_records()
+            return [
+                {
+                    'id': r['dataset_id'],
+                    'name': r['name'],
+                    'description': r['description'],
+                    'created_by': r['created_by'],
+                    'created_at': r['created_at'],
+                    'pair_count': int(r['pair_count']) if r['pair_count'] else 0
+                }
+                for r in records
+            ]
+        except Exception as e:
+            self.error_message = str(e)
+            return []
     
-    # Mettre à jour aussi le fichier global
-    global_progress = load_json(PROGRESS_FILE) or {}
-    if username not in global_progress:
-        global_progress[username] = {}
-    global_progress[username][dataset] = user_progress[dataset]
-    save_json(PROGRESS_FILE, global_progress)
-
-def get_user_progress(username, dataset):
-    """Récupère la progression de l'utilisateur"""
-    # Essayer d'abord le fichier utilisateur
-    user_progress_path = get_user_progress_path(username)
-    user_progress = load_json(user_progress_path)
+    def get_dataset_pairs(self, dataset_id: str) -> List[DatasetPair]:
+        """Get all pairs for a dataset"""
+        try:
+            records = self.dataset_pairs_sheet.get_all_records()
+            pairs = []
+            
+            for record in records:
+                if record['dataset'] == dataset_id:
+                    pairs.append(DatasetPair(
+                        pair_id=record['pair_id'],
+                        dataset=record['dataset'],
+                        event1_text=record['event1_text'],
+                        event2_text=record['event2_text'],
+                        event1_id=record['event1_id'],
+                        event2_id=record['event2_id'],
+                        metadata=record['metadata']
+                    ))
+            
+            # Sort by row_index if available
+            pairs.sort(key=lambda x: int(record.get('row_index', 0)) 
+                      if isinstance(record.get('row_index'), (int, str)) and str(record.get('row_index', '0')).isdigit() 
+                      else 0)
+            
+            return pairs
+        except Exception as e:
+            self.error_message = str(e)
+            return []
     
-    if user_progress and dataset in user_progress:
-        return user_progress[dataset]
-    
-    # Essayer le fichier global
-    global_progress = load_json(PROGRESS_FILE)
-    if global_progress and username in global_progress and dataset in global_progress[username]:
-        return global_progress[username][dataset]
-    
-    # Vérifier dans les annotations existantes
-    user_annotation_path = get_user_annotation_path(username, dataset)
-    if os.path.exists(user_annotation_path):
-        data = load_json(user_annotation_path)
-        if data:
+    def import_json_dataset(self, dataset_id: str, json_content: str, 
+                           name: str = "", description: str = "", 
+                           created_by: str = "") -> bool:
+        """Import a JSON dataset into Google Sheets"""
+        try:
+            data = json.loads(json_content)
+            
+            # Determine pairs based on JSON structure
             if isinstance(data, list):
                 pairs = data
-            elif isinstance(data, dict) and "pairs" in data:
-                pairs = data["pairs"]
+            elif isinstance(data, dict) and 'pairs' in data:
+                pairs = data['pairs']
             else:
-                pairs = []
+                self.error_message = "Invalid JSON format"
+                return False
             
-            user_annotations = [p for p in pairs if p.get("annotated_by") == username]
-            last_index = 0
-            for i, p in enumerate(pairs):
-                if p.get("annotated_by") == username:
-                    last_index = i
+            # Use dataset_id as name if not provided
+            if not name:
+                name = dataset_id
             
-            progress_data = {
-                "current_index": last_index,
-                "total_annotated": len(user_annotations),
-                "last_updated": datetime.now().isoformat()
+            # Create dataset
+            return self.create_dataset(dataset_id, name, description, created_by, pairs)
+            
+        except json.JSONDecodeError as e:
+            self.error_message = f"Invalid JSON: {str(e)}"
+            return False
+        except Exception as e:
+            self.error_message = str(e)
+            return False
+    
+    # ========== ANNOTATION MANAGEMENT ==========
+    
+    def save_annotation(self, annotation: Annotation) -> str:
+        """Save an annotation"""
+        try:
+            ann_id = str(uuid.uuid4())[:8]
+            
+            self.annotations_sheet.append_row([
+                ann_id,
+                annotation.pair_id,
+                annotation.dataset,
+                annotation.username,
+                annotation.event1_text[:500],
+                annotation.event2_text[:500],
+                annotation.cue1,
+                annotation.cue2,
+                annotation.label if annotation.label is not None else "",
+                annotation.confidence,
+                annotation.notes[:200],
+                annotation.annotated_at or datetime.now().isoformat(),
+                annotation.event1_id,
+                annotation.event2_id,
+                "0"
+            ])
+            
+            return ann_id
+        except Exception as e:
+            self.error_message = str(e)
+            return ""
+    
+    def get_user_annotations(self, username: str, dataset_id: str = None) -> List[Dict]:
+        """Get annotations for a user"""
+        try:
+            records = self.annotations_sheet.get_all_records()
+            annotations = []
+            
+            for record in records:
+                if record['username'] == username:
+                    if dataset_id and record['dataset'] != dataset_id:
+                        continue
+                    
+                    annotations.append({
+                        'id': record['id'],
+                        'pair_id': record['pair_id'],
+                        'dataset': record['dataset'],
+                        'username': record['username'],
+                        'event1_text': record['event1_text'],
+                        'event2_text': record['event2_text'],
+                        'cue1': int(record['cue1']) if record['cue1'] else 0,
+                        'cue2': int(record['cue2']) if record['cue2'] else 0,
+                        'label': int(record['label']) if record['label'] else None,
+                        'confidence': int(record['confidence']) if record['confidence'] else 3,
+                        'notes': record['notes'],
+                        'annotated_at': record['annotated_at'],
+                        'event1_id': record['event1_id'],
+                        'event2_id': record['event2_id']
+                    })
+            
+            return annotations
+        except Exception as e:
+            self.error_message = str(e)
+            return []
+    
+    # ========== PROGRESS MANAGEMENT ==========
+    
+    def update_progress(self, username: str, dataset_id: str, current_index: int, 
+                       total_annotated: int, last_pair_id: str = "") -> bool:
+        """Update user progress"""
+        try:
+            records = self.progress_sheet.get_all_records()
+            row_num = None
+            
+            for i, record in enumerate(records, start=2):
+                if record['username'] == username and record['dataset'] == dataset_id:
+                    row_num = i
+                    break
+            
+            if row_num:
+                self.progress_sheet.update(f'A{row_num}:F{row_num}', [[
+                    username, dataset_id, current_index, total_annotated,
+                    datetime.now().isoformat(), last_pair_id
+                ]])
+            else:
+                self.progress_sheet.append_row([
+                    username, dataset_id, current_index, total_annotated,
+                    datetime.now().isoformat(), last_pair_id
+                ])
+            
+            return True
+        except Exception as e:
+            self.error_message = str(e)
+            return False
+    
+    def get_user_progress(self, username: str, dataset_id: str) -> Dict:
+        """Get user progress"""
+        try:
+            records = self.progress_sheet.get_all_records()
+            
+            for record in records:
+                if record['username'] == username and record['dataset'] == dataset_id:
+                    return {
+                        'current_index': int(record['current_index']) if record['current_index'] else 0,
+                        'total_annotated': int(record['total_annotated']) if record['total_annotated'] else 0,
+                        'last_updated': record['last_updated'],
+                        'last_pair_id': record.get('last_pair_id', '')
+                    }
+            
+            return {
+                'current_index': 0,
+                'total_annotated': 0,
+                'last_updated': '',
+                'last_pair_id': ''
             }
-            
-            # Sauvegarder cette progression pour la prochaine fois
-            update_user_progress(username, dataset, pairs)
-            return progress_data
+        except Exception as e:
+            self.error_message = str(e)
+            return {'current_index': 0, 'total_annotated': 0, 'last_updated': ''}
     
-    # Retourner des valeurs par défaut
-    return {
-        "current_index": 0,
-        "total_annotated": 0,
-        "last_updated": ""
+    def get_all_users(self) -> List[str]:
+        """Get all registered usernames"""
+        try:
+            users = self.users_sheet.get_all_records()
+            return [user['username'] for user in users]
+        except:
+            return []
+
+# =============================================================================
+# STREAMLIT APPLICATION
+# =============================================================================
+
+# Page config
+st.set_page_config(
+    page_title="CausaFr - Google Sheets Annotation",
+    page_icon="🔗",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Custom CSS
+st.markdown("""
+<style>
+    .main-header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 2rem;
+        border-radius: 10px;
+        margin-bottom: 2rem;
+        text-align: center;
     }
-
-def compute_stats(pairs):
-    """Calcule les statistiques des paires"""
-    total = len(pairs)
-    if total == 0:
-        return {"total": 0, "annotated": 0, "causal": 0, "non_causal": 0, "causal_rate": 0}
-    
-    causal = sum(1 for p in pairs if p.get("label") == 1)
-    non_causal = sum(1 for p in pairs if p.get("label") == 0)
-    annotated = sum(1 for p in pairs if p.get("annotated_by"))
-    
-    return {
-        "total": total,
-        "annotated": annotated,
-        "causal": causal,
-        "non_causal": non_causal,
-        "causal_rate": causal / total * 100 if total > 0 else 0
+    .sentence-box {
+        background: #f8f9fa;
+        border-left: 4px solid #4e73df;
+        padding: 1.5rem;
+        border-radius: 5px;
+        margin: 1rem 0;
     }
+    .card {
+        background: white;
+        border-radius: 10px;
+        padding: 1.5rem;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        margin: 1rem 0;
+        border: 1px solid #e3e6f0;
+    }
+    .progress-bar {
+        background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+        height: 10px;
+        border-radius: 5px;
+        margin: 1rem 0;
+    }
+    .stat-card {
+        background: #f8f9fa;
+        padding: 1rem;
+        border-radius: 8px;
+        text-align: center;
+        border: 1px solid #e3e6f0;
+    }
+    .alert {
+        padding: 1rem;
+        border-radius: 8px;
+        margin: 1rem 0;
+    }
+    .alert-success {
+        background: #d1e7dd;
+        border: 1px solid #badbcc;
+        color: #0f5132;
+    }
+    .alert-warning {
+        background: #fff3cd;
+        border: 1px solid #ffecb5;
+        color: #664d03;
+    }
+    .alert-error {
+        background: #f8d7da;
+        border: 1px solid #f5c2c7;
+        color: #842029;
+    }
+    .tab-content {
+        padding: 1rem 0;
+    }
+</style>
+""", unsafe_allow_html=True)
 
-def load_pairs_for_view(path):
-    """Charge les paires pour la visualisation"""
-    data = load_json(path)
-    if data is None:
-        return []
-    
-    if isinstance(data, list):
-        return data
-    elif isinstance(data, dict) and "pairs" in data:
-        return data["pairs"]
-    return []
+# Initialize session state
+if 'authenticated' not in st.session_state:
+    st.session_state.authenticated = False
+    st.session_state.username = None
+    st.session_state.gsheets = None
+    st.session_state.current_dataset = None
+    st.session_state.pair_index = 0
+    st.session_state.current_pairs = []
 
-# =========================
-# Pages
-# =========================
+# Initialize Google Sheets
+if st.session_state.gsheets is None:
+    st.session_state.gsheets = GoogleSheetsManager()
+    if not st.session_state.gsheets.connect():
+        st.error(f"❌ Connection failed: {st.session_state.gsheets.error_message}")
+        st.stop()
+
+# =============================================================================
+# PAGES
+# =============================================================================
 
 def login_page():
-    """Page de connexion"""
-    load_custom_css()
+    """Login/Register page"""
+    st.markdown("""
+    <div class="main-header">
+        <h1>🔗 CausaFr Annotation Tool</h1>
+        <p>All data stored in Google Sheets - No local files needed</p>
+    </div>
+    """, unsafe_allow_html=True)
     
-    st.markdown("<div style='height: 3rem'></div>", unsafe_allow_html=True)
+    col1, col2, col3 = st.columns([1, 2, 1])
     
-    col1, col2, col3 = st.columns([1, 1.2, 1])
     with col2:
-        st.markdown("""
-        <div class="login-box">
-            <div class="login-logo">
-                <div class="icon">🔗</div>
-                <h1>CausaFr</h1>
-                <p>Annotation de Relations Causales</p>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # Onglets pour connexion/création de compte
         tab1, tab2 = st.tabs(["🔐 Connexion", "📝 Créer un compte"])
         
         with tab1:
-            with st.form("login_form"):
-                username = st.text_input("👤 Identifiant", placeholder="Votre nom d'utilisateur", key="login_username")
-                password = st.text_input("🔒 Mot de passe", type="password", placeholder="Votre mot de passe", key="login_password")
-                
-                if st.form_submit_button("Se connecter", use_container_width=True, type="primary"):
-                    if verify_user(username, password):
+            st.markdown("### Connexion")
+            username = st.text_input("Nom d'utilisateur")
+            password = st.text_input("Mot de passe", type="password")
+            
+            if st.button("Se connecter", type="primary", use_container_width=True):
+                if username and password:
+                    if st.session_state.gsheets.verify_user(username, password):
                         st.session_state.authenticated = True
                         st.session_state.username = username
-                        st.session_state.login_time = datetime.now().isoformat()
                         st.rerun()
                     else:
                         st.error("❌ Identifiants incorrects")
+                else:
+                    st.warning("⚠️ Remplissez tous les champs")
         
         with tab2:
-            with st.form("create_account_form"):
-                new_user = st.text_input("👤 Nouvel identifiant", placeholder="Choisissez un nom d'utilisateur", key="new_username")
-                new_pass = st.text_input("🔒 Nouveau mot de passe", type="password", placeholder="Choisissez un mot de passe", key="new_password")
-                confirm_pass = st.text_input("🔁 Confirmer le mot de passe", type="password", placeholder="Retapez le mot de passe", key="confirm_password")
-                
-                if st.form_submit_button("Créer le compte", use_container_width=True, type="primary"):
-                    if not new_user or not new_pass:
-                        st.error("❌ Veuillez remplir tous les champs")
-                    elif new_pass != confirm_pass:
+            st.markdown("### Créer un compte")
+            new_user = st.text_input("Nouvel utilisateur")
+            new_pass = st.text_input("Nouveau mot de passe", type="password")
+            confirm_pass = st.text_input("Confirmer le mot de passe", type="password")
+            email = st.text_input("Email (optionnel)")
+            
+            if st.button("Créer le compte", type="primary", use_container_width=True):
+                if new_user and new_pass:
+                    if new_pass != confirm_pass:
                         st.error("❌ Les mots de passe ne correspondent pas")
                     else:
-                        users = load_users()
-                        if new_user in users:
-                            st.error("❌ Cet utilisateur existe déjà")
+                        if st.session_state.gsheets.create_user(new_user, new_pass, email):
+                            st.success("✅ Compte créé !")
+                            st.info("Connectez-vous maintenant")
                         else:
-                            users[new_user] = hash_password(new_pass)
-                            if save_json(USERS_FILE, users):
-                                st.success("✅ Compte créé avec succès !")
-                                st.info("Vous pouvez maintenant vous connecter avec vos identifiants.")
-                            else:
-                                st.error("❌ Erreur lors de la création du compte")
-
-def logout():
-    """Déconnexion de l'utilisateur"""
-    for key in ['authenticated', 'username', 'login_time', 'pair_index', 'current_dataset']:
-        if key in st.session_state:
-            del st.session_state[key]
-    st.rerun()
-
-def annotate_page(username, dataset):
-    """Page d'annotation principale"""
-    # Vérifier l'intégrité des annotations
-    if not verify_annotations_integrity(username, dataset):
-        st.warning("⚠️ Vérification des annotations en cours...")
-    
-    # Charger les paires
-    pairs, annotation_path = load_pairs_for_user(username, dataset)
-    
-    if not pairs:
-        st.error("❌ Aucune paire trouvée pour l'annotation.")
-        return
-    
-    # Initialiser la session
-    if st.session_state.get("current_dataset") != dataset:
-        st.session_state.current_dataset = dataset
-        st.session_state.pair_index = 0
-    
-    # Récupérer la progression sauvegardée
-    saved_progress = get_user_progress(username, dataset)
-    if "pair_index" not in st.session_state or st.session_state.pair_index == 0:
-        st.session_state.pair_index = saved_progress.get("current_index", 0)
-    
-    # S'assurer que l'index est valide
-    total = len(pairs)
-    st.session_state.pair_index = max(0, min(st.session_state.pair_index, total - 1))
-    
-    idx = st.session_state.pair_index
-    pair = pairs[idx]
-    stats = compute_stats(pairs)
-    
-    # Sidebar
-    with st.sidebar:
-        st.markdown("### 📊 Statistiques")
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("Total", stats["total"])
-            st.metric("Causales", stats["causal"])
-        with col2:
-            st.metric("Annotées", stats["annotated"])
-            st.metric("Taux", f"{stats['causal_rate']:.0f}%")
-        
-        st.markdown("---")
-        st.markdown("### 📍 Progression")
-        render_progress(idx + 1, total)
-        
-        st.markdown("---")
-        st.markdown("### 🧭 Navigation")
-        
-        jump = st.number_input("Aller à", 1, total, idx + 1, label_visibility="collapsed")
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("📍 Aller", use_container_width=True):
-                st.session_state.pair_index = int(jump) - 1
-                st.rerun()
-        with col2:
-            if st.button("⏭️ Non annotée", use_container_width=True):
-                for i, p in enumerate(pairs[idx:], start=idx):
-                    if not p.get("annotated_by"):
-                        st.session_state.pair_index = i
-                        st.rerun()
-                        break
+                            st.error("❌ Ce nom d'utilisateur existe déjà")
                 else:
-                    st.warning("Toutes les paires sont annotées")
-        
-        st.markdown("---")
-        st.markdown("### ⚡ Actions rapides")
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("✅ Causal", use_container_width=True):
-                pair.update({
-                    "label": 1,
-                    "confidence": 3,
-                    "annotated_by": username,
-                    "annotated_at": datetime.now().isoformat()
-                })
-                save_user_annotations(username, dataset, pairs)
-                st.rerun()
-        with col2:
-            if st.button("❌ Non causal", use_container_width=True):
-                pair.update({
-                    "label": 0,
-                    "confidence": 3,
-                    "annotated_by": username,
-                    "annotated_at": datetime.now().isoformat()
-                })
-                save_user_annotations(username, dataset, pairs)
-                st.rerun()
-    
-    # Main content
-    render_header(f"Paire {idx + 1} / {total}", f"📄 {dataset} • 👤 {username}")
-    
-    if pair.get("annotated_by"):
-        st.markdown(f"""
-        <div class="alert warning">
-            ✏️ <strong>Déjà annotée</strong> par {pair['annotated_by']} — {pair.get('annotated_at', '')[:16]}
-        </div>
-        """, unsafe_allow_html=True)
-    
-    # Événements
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown("""
-        <div class="event-box cause">
-            <div class="label">🔵 Événement 1 — Cause potentielle</div>
-        </div>
-        """, unsafe_allow_html=True)
-        e1_text = st.text_area("E1", pair.get("event1_text", ""), height=130, key=f"e1_{idx}", label_visibility="collapsed")
-        e1_cue = st.checkbox("🏷️ Marqueur causal explicite", bool(pair.get("cue1", False)), key=f"c1_{idx}")
-    
-    with col2:
-        st.markdown("""
-        <div class="event-box effect">
-            <div class="label">🟢 Événement 2 — Effet potentiel</div>
-        </div>
-        """, unsafe_allow_html=True)
-        e2_text = st.text_area("E2", pair.get("event2_text", ""), height=130, key=f"e2_{idx}", label_visibility="collapsed")
-        e2_cue = st.checkbox("🏷️ Marqueur causal explicite", bool(pair.get("cue2", False)), key=f"c2_{idx}")
-    
-    # Question
+                    st.warning("⚠️ Remplissez tous les champs obligatoires")
+
+def dataset_management_page():
+    """Dataset upload and management page"""
     st.markdown("""
-    <div class="question-box">
-        <h3>❓ Existe-t-il une relation CAUSALE ?</h3>
-        <p>L'événement 1 cause-t-il ou contribue-t-il à l'événement 2 ?</p>
+    <div class="main-header">
+        <h1>📁 Gestion des Datasets</h1>
+        <p>Importez vos datasets JSON dans Google Sheets</p>
     </div>
     """, unsafe_allow_html=True)
     
+    gsheets = st.session_state.gsheets
+    
+    tab1, tab2 = st.tabs(["📤 Importer un Dataset", "📋 Datasets Disponibles"])
+    
+    with tab1:
+        st.markdown("### Importer un Dataset JSON")
+        
+        # Dataset info
+        col1, col2 = st.columns(2)
+        with col1:
+            dataset_id = st.text_input("ID du Dataset", 
+                                      placeholder="ex: dataset_1, causal_fr, etc.")
+            dataset_name = st.text_input("Nom du Dataset", 
+                                        placeholder="Nom affiché")
+        with col2:
+            created_by = st.text_input("Créé par", value=st.session_state.username)
+            description = st.text_area("Description", placeholder="Description du dataset")
+        
+        # JSON upload
+        st.markdown("### Contenu JSON")
+        json_method = st.radio("Méthode d'import", 
+                              ["📤 Upload fichier", "📝 Coller le JSON"])
+        
+        json_content = ""
+        
+        if json_method == "📤 Upload fichier":
+            uploaded_file = st.file_uploader("Choisir un fichier JSON", type=['json'])
+            if uploaded_file is not None:
+                try:
+                    json_content = uploaded_file.getvalue().decode('utf-8')
+                    st.success(f"✅ Fichier chargé: {uploaded_file.name}")
+                    
+                    # Preview
+                    with st.expander("📄 Aperçu du JSON"):
+                        st.code(json_content[:1000] + "..." if len(json_content) > 1000 else json_content, 
+                               language="json")
+                except Exception as e:
+                    st.error(f"❌ Erreur de lecture: {e}")
+        
+        else:  # Paste JSON
+            json_content = st.text_area("Collez votre JSON ici", height=300,
+                                       placeholder='{"pairs": [...]} ou [...]')
+            if json_content:
+                try:
+                    json.loads(json_content)
+                    st.success("✅ JSON valide")
+                except json.JSONDecodeError as e:
+                    st.error(f"❌ JSON invalide: {e}")
+        
+        # Import button
+        if st.button("🚀 Importer dans Google Sheets", type="primary", 
+                    disabled=not (dataset_id and json_content)):
+            with st.spinner("Importation en cours..."):
+                if gsheets.import_json_dataset(dataset_id, json_content, 
+                                              dataset_name or dataset_id, 
+                                              description, created_by):
+                    st.success("✅ Dataset importé avec succès !")
+                    st.balloons()
+                else:
+                    st.error(f"❌ Erreur: {gsheets.error_message}")
+    
+    with tab2:
+        st.markdown("### Datasets disponibles")
+        
+        datasets = gsheets.get_datasets()
+        
+        if not datasets:
+            st.info("📭 Aucun dataset disponible")
+            return
+        
+        for dataset in datasets:
+            with st.expander(f"📁 {dataset['name']} ({dataset['id']})"):
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    st.write(f"**Description:** {dataset['description']}")
+                    st.write(f"**Créé par:** {dataset['created_by']}")
+                    st.write(f"**Date:** {dataset['created_at'][:10]}")
+                with col2:
+                    st.metric("Paires", dataset['pair_count'])
+                
+                # Load pairs button
+                if st.button(f"📊 Voir les paires", key=f"view_{dataset['id']}"):
+                    pairs = gsheets.get_dataset_pairs(dataset['id'])
+                    if pairs:
+                        st.info(f"📋 {len(pairs)} paires chargées")
+                        # Preview first 3 pairs
+                        for i, pair in enumerate(pairs[:3]):
+                            st.write(f"**Paire {i+1}:** {pair.event1_text[:50]}... → {pair.event2_text[:50]}...")
+                        if len(pairs) > 3:
+                            st.caption(f"... et {len(pairs)-3} autres paires")
+                    else:
+                        st.warning("❌ Erreur de chargement")
+
+def annotate_page():
+    """Main annotation page"""
+    username = st.session_state.username
+    gsheets = st.session_state.gsheets
+    
+    # Sidebar
+    with st.sidebar:
+        st.markdown(f"### 👤 {username}")
+        
+        # Dataset selection
+        st.markdown("### 📁 Dataset")
+        
+        datasets = gsheets.get_datasets()
+        if not datasets:
+            st.error("Aucun dataset disponible")
+            st.info("Importez d'abord un dataset")
+            return
+        
+        dataset_options = {f"{d['name']} ({d['id']})": d['id'] for d in datasets}
+        selected_display = st.selectbox("Choisir un dataset", list(dataset_options.keys()))
+        selected_id = dataset_options[selected_display]
+        
+        if st.session_state.current_dataset != selected_id:
+            st.session_state.current_dataset = selected_id
+            st.session_state.pair_index = 0
+            st.session_state.current_pairs = []
+        
+        # Load dataset pairs
+        if not st.session_state.current_pairs:
+            pairs = gsheets.get_dataset_pairs(selected_id)
+            if not pairs:
+                st.error("❌ Erreur de chargement des paires")
+                return
+            st.session_state.current_pairs = pairs
+        
+        pairs = st.session_state.current_pairs
+        total_pairs = len(pairs)
+        
+        # Load progress
+        progress = gsheets.get_user_progress(username, selected_id)
+        current_index = progress.get('current_index', 0)
+        
+        if st.session_state.pair_index == 0 and current_index > 0:
+            st.session_state.pair_index = min(current_index, total_pairs - 1)
+        
+        # Statistics
+        user_annotations = gsheets.get_user_annotations(username, selected_id)
+        annotated_count = len(user_annotations)
+        causal_count = sum(1 for ann in user_annotations if ann.get('label') == 1)
+        non_causal_count = sum(1 for ann in user_annotations if ann.get('label') == 0)
+        
+        st.markdown("### 📊 Statistiques")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Total", total_pairs)
+            st.metric("Causales", causal_count)
+        with col2:
+            st.metric("Annotées", annotated_count)
+            st.metric("Non causales", non_causal_count)
+        
+        # Progress
+        st.markdown("### 📍 Progression")
+        progress_pct = (annotated_count / total_pairs * 100) if total_pairs > 0 else 0
+        st.markdown(f'<div class="progress-bar" style="width: {progress_pct}%"></div>', unsafe_allow_html=True)
+        st.caption(f"{annotated_count}/{total_pairs} ({progress_pct:.1f}%)")
+        
+        # Navigation
+        st.markdown("### 🧭 Navigation")
+        jump_to = st.number_input("Aller à", 1, total_pairs, st.session_state.pair_index + 1)
+        if st.button("Aller", use_container_width=True):
+            st.session_state.pair_index = jump_to - 1
+            st.rerun()
+        
+        # Quick navigation
+        if st.button("⏭️ Prochaine non annotée", use_container_width=True):
+            for i in range(st.session_state.pair_index + 1, total_pairs):
+                pair_id = pairs[i].pair_id
+                existing = [ann for ann in user_annotations if ann.get('pair_id') == pair_id]
+                if not existing:
+                    st.session_state.pair_index = i
+                    st.rerun()
+                    break
+        
+        st.markdown("---")
+        if st.button("🚪 Déconnexion", use_container_width=True):
+            for key in list(st.session_state.keys()):
+                del st.session_state[key]
+            st.rerun()
+    
+    # Main content
+    if not pairs:
+        st.warning("Aucune paire à annoter")
+        return
+    
+    idx = st.session_state.pair_index
+    current_pair = pairs[idx]
+    
+    # Header
+    st.markdown(f"""
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+        <h2>Paire {idx + 1} / {total_pairs}</h2>
+        <span style="background: #e9ecef; padding: 0.5rem 1rem; border-radius: 20px;">
+            📄 {selected_display}
+        </span>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Check if already annotated
+    existing_annotations = [ann for ann in user_annotations 
+                          if ann.get('pair_id') == current_pair.pair_id]
+    
+    if existing_annotations:
+        existing = existing_annotations[0]
+        st.markdown(f"""
+        <div class="alert alert-warning">
+            ✏️ <strong>Déjà annotée</strong> le {existing.get('annotated_at', '')[:16]}
+            (Confidence: {existing.get('confidence', 3)}/5)
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # Events display
     col1, col2 = st.columns(2)
+    
     with col1:
-        current_label = pair.get("label", 0)
+        st.markdown("#### 🔵 Événement 1 (Cause)")
+        st.markdown(f'<div class="sentence-box">{current_pair.event1_text}</div>', unsafe_allow_html=True)
+        cue1 = st.checkbox("Marqueur causal explicite", 
+                          value=bool(existing_annotations[0].get('cue1', 0)) if existing_annotations else False,
+                          key="cue1")
+    
+    with col2:
+        st.markdown("#### 🟢 Événement 2 (Effet)")
+        st.markdown(f'<div class="sentence-box">{current_pair.event2_text}</div>', unsafe_allow_html=True)
+        cue2 = st.checkbox("Marqueur causal explicite",
+                          value=bool(existing_annotations[0].get('cue2', 0)) if existing_annotations else False,
+                          key="cue2")
+    
+    # Annotation question
+    st.markdown("""
+    <div style="background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%); 
+                padding: 1.5rem; border-radius: 10px; margin: 2rem 0; text-align: center;">
+        <h3 style="color: #1565c0; margin: 0 0 0.5rem 0;">❓ Relation causale ?</h3>
+        <p style="color: #1976d2; margin: 0;">L'événement 1 cause-t-il l'événement 2 ?</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Annotation controls
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        current_label = existing_annotations[0].get('label') if existing_annotations else None
         label = st.radio(
-            "Label",
+            "Décision",
             [1, 0],
             index=0 if current_label == 1 else 1,
-            format_func=lambda x: "✅ OUI — Causal" if x == 1 else "❌ NON — Pas causal",
-            key=f"lbl_{idx}",
-            horizontal=False,
-            label_visibility="collapsed"
+            format_func=lambda x: "✅ OUI - Relation causale" if x == 1 else "❌ NON - Pas de relation",
+            key="label"
         )
     
     with col2:
-        confidence = st.slider("🎯 Confiance", 1, 5, int(pair.get("confidence", 3)), key=f"conf_{idx}")
-        notes = st.text_input("📝 Notes", pair.get("notes", ""), key=f"note_{idx}", placeholder="Optionnel...")
+        current_conf = existing_annotations[0].get('confidence', 3) if existing_annotations else 3
+        confidence = st.slider("Confiance", 1, 5, current_conf, key="confidence")
+        notes = st.text_input("Notes", 
+                             value=existing_annotations[0].get('notes', '') if existing_annotations else '',
+                             placeholder="Notes optionnelles...",
+                             key="notes")
     
+    # Action buttons
     st.markdown("---")
-    
-    # Actions
     col1, col2, col3, col4 = st.columns([1, 2, 2, 1])
     
     with col1:
@@ -1976,351 +923,246 @@ def annotate_page(username, dataset):
     
     with col2:
         if st.button("💾 Enregistrer", type="primary", use_container_width=True):
-            pair.update({
-                "event1_text": e1_text,
-                "event2_text": e2_text,
-                "cue1": int(bool(e1_cue)),
-                "cue2": int(bool(e2_cue)),
-                "label": int(label),
-                "confidence": int(confidence),
-                "notes": notes,
-                "annotated_by": username,
-                "annotated_at": datetime.now().isoformat()
-            })
-            pairs[idx] = pair
+            annotation = Annotation(
+                id="",
+                pair_id=current_pair.pair_id,
+                dataset=selected_id,
+                username=username,
+                event1_text=current_pair.event1_text,
+                event2_text=current_pair.event2_text,
+                cue1=int(cue1),
+                cue2=int(cue2),
+                label=int(label),
+                confidence=confidence,
+                notes=notes,
+                annotated_at=datetime.now().isoformat(),
+                event1_id=current_pair.event1_id,
+                event2_id=current_pair.event2_id
+            )
             
-            if save_user_annotations(username, dataset, pairs):
+            ann_id = gsheets.save_annotation(annotation)
+            if ann_id:
+                user_anns = gsheets.get_user_annotations(username, selected_id)
+                gsheets.update_progress(username, selected_id, idx, len(user_anns), current_pair.pair_id)
                 st.success("✅ Annotation sauvegardée")
                 st.rerun()
+            else:
+                st.error(f"❌ Erreur: {gsheets.error_message}")
     
     with col3:
         if st.button("💾 & ⏭️ Suivant", use_container_width=True):
-            pair.update({
-                "event1_text": e1_text,
-                "event2_text": e2_text,
-                "cue1": int(bool(e1_cue)),
-                "cue2": int(bool(e2_cue)),
-                "label": int(label),
-                "confidence": int(confidence),
-                "notes": notes,
-                "annotated_by": username,
-                "annotated_at": datetime.now().isoformat()
-            })
-            pairs[idx] = pair
+            annotation = Annotation(
+                id="",
+                pair_id=current_pair.pair_id,
+                dataset=selected_id,
+                username=username,
+                event1_text=current_pair.event1_text,
+                event2_text=current_pair.event2_text,
+                cue1=int(cue1),
+                cue2=int(cue2),
+                label=int(label),
+                confidence=confidence,
+                notes=notes,
+                annotated_at=datetime.now().isoformat(),
+                event1_id=current_pair.event1_id,
+                event2_id=current_pair.event2_id
+            )
             
-            if save_user_annotations(username, dataset, pairs):
-                if idx < total - 1:
+            ann_id = gsheets.save_annotation(annotation)
+            if ann_id:
+                user_anns = gsheets.get_user_annotations(username, selected_id)
+                gsheets.update_progress(username, selected_id, idx, len(user_anns), current_pair.pair_id)
+                if idx < total_pairs - 1:
                     st.session_state.pair_index += 1
                 st.rerun()
+            else:
+                st.error(f"❌ Erreur: {gsheets.error_message}")
     
     with col4:
-        if st.button("➡️", disabled=idx >= total - 1, use_container_width=True):
+        if st.button("➡️", disabled=idx >= total_pairs - 1, use_container_width=True):
             st.session_state.pair_index += 1
             st.rerun()
     
-    # Téléchargement
+    # Export button
     st.markdown("---")
-    if os.path.exists(annotation_path):
-        with open(annotation_path, "r", encoding="utf-8") as f:
+    if st.button("📥 Exporter mes annotations", use_container_width=True):
+        user_annotations = gsheets.get_user_annotations(username, selected_id)
+        if user_annotations:
+            export_data = {
+                'metadata': {
+                    'username': username,
+                    'dataset': selected_id,
+                    'exported_at': datetime.now().isoformat(),
+                    'total_annotations': len(user_annotations)
+                },
+                'annotations': user_annotations
+            }
+            
+            json_str = json.dumps(export_data, indent=2, ensure_ascii=False)
             st.download_button(
-                "⬇️ Télécharger mes annotations",
-                f.read(),
-                file_name=get_annotation_filename(username, dataset),
+                "⬇️ Télécharger JSON",
+                json_str,
+                file_name=f"causafr_{username}_{selected_id}_{datetime.now().strftime('%Y%m%d')}.json",
                 mime="application/json",
                 use_container_width=True
             )
-
-def view_page():
-    """Page de visualisation des annotations"""
-    render_header("Fichiers d'Annotation", "Visualisez et téléchargez les annotations")
-    
-    if not os.path.exists(OUT_DIR):
-        st.info("📂 Aucun fichier trouvé")
-        return
-    
-    files = [f for f in os.listdir(OUT_DIR) if f.endswith(".json") and not f.endswith("_progress.json")]
-    if not files:
-        st.info("📂 Aucun fichier annoté")
-        return
-    
-    selected = st.selectbox("📁 Fichier", files)
-    if not selected:
-        return
-    
-    data = load_pairs_for_view(os.path.join(OUT_DIR, selected))
-    if not data:
-        st.error("❌ Aucune paire valide dans ce fichier.")
-        return
-    
-    stats = compute_stats(data)
-    render_metrics(stats)
-    
-    st.markdown("---")
-    
-    # Filtres
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        f_label = st.selectbox("🏷️ Label", ["Tous", "Causal", "Non causal", "Non annoté"])
-    with col2:
-        annotators = sorted({p.get("annotated_by") for p in data if p.get("annotated_by")})
-        f_ann = st.selectbox("👤 Annotateur", ["Tous"] + annotators)
-    with col3:
-        f_cue = st.selectbox("🔍 Marqueur", ["Tous", "Avec", "Sans"])
-    
-    filtered = data
-    if f_label == "Causal":
-        filtered = [p for p in filtered if p.get("label") == 1]
-    elif f_label == "Non causal":
-        filtered = [p for p in filtered if p.get("label") == 0]
-    elif f_label == "Non annoté":
-        filtered = [p for p in filtered if not p.get("annotated_by")]
-    
-    if f_ann != "Tous":
-        filtered = [p for p in filtered if p.get("annotated_by") == f_ann]
-    
-    if f_cue == "Avec":
-        filtered = [p for p in filtered if p.get("cue1") or p.get("cue2")]
-    elif f_cue == "Sans":
-        filtered = [p for p in filtered if not p.get("cue1") and not p.get("cue2")]
-    
-    st.caption(f"📋 {len(filtered)} paires")
-    
-    for i, p in enumerate(filtered[:50]):
-        icon = "✅" if p.get("label") == 1 else "❌" if p.get("label") == 0 else "❓"
-        e1_full = p.get("event1_text", "") or ""
-        e2_full = p.get("event2_text", "") or ""
-        e1 = (e1_full[:45] + "...") if len(e1_full) > 45 else e1_full
-        e2 = (e2_full[:45] + "...") if len(e2_full) > 45 else e2_full
-        
-        with st.expander(f"{icon} {e1} → {e2}"):
-            col1, col2 = st.columns(2)
-            with col1:
-                st.markdown(f"**🔵 E1:** {e1_full or 'N/A'}")
-            with col2:
-                st.markdown(f"**🟢 E2:** {e2_full or 'N/A'}")
-            if p.get("annotated_by"):
-                st.caption(f"👤 {p['annotated_by']} • 🎯 {p.get('confidence', '?')}/5 • 📅 {p.get('annotated_at', '')[:10]}")
-    
-    if len(filtered) > 50:
-        st.warning("⚠️ 50 premières paires affichées")
-    
-    st.markdown("---")
-    with open(os.path.join(OUT_DIR, selected), "r", encoding="utf-8") as f:
-        st.download_button(
-            "⬇️ Télécharger",
-            f.read(),
-            selected,
-            "application/json",
-            use_container_width=True
-        )
-
-def iaa_page():
-    """Page d'analyse d'accord inter-annotateurs"""
-    render_header("Accord Inter-Annotateurs", "Analyse de la cohérence des annotations")
-    
-    if not os.path.exists(OUT_DIR):
-        st.info("📂 Aucun fichier")
-        return
-    
-    files = [f for f in os.listdir(OUT_DIR) if f.endswith(".json") and not f.endswith("_progress.json")]
-    if len(files) < 2:
-        st.info("ℹ️ 2 fichiers minimum requis")
-        return
-    
-    # Grouper par dataset
-    datasets = {}
-    for f in files:
-        if "_" in f and f.endswith(".json"):
-            # Essayer d'extraire le nom du dataset et l'annotateur
-            base = f.replace(".json", "")
-            parts = base.rsplit("_", 1)
-            if len(parts) == 2:
-                ds, ann = parts
-                datasets.setdefault(ds, []).append((ann, f))
-    
-    multi = {k: v for k, v in datasets.items() if len(v) >= 2}
-    if not multi:
-        st.warning("⚠️ Aucun jeu avec plusieurs annotateurs")
-        return
-    
-    selected = st.selectbox("📁 Jeu de données", list(multi.keys()))
-    if not selected:
-        return
-    
-    annotators = multi[selected]
-    st.success(f"👥 Annotateurs : {', '.join(a[0] for a in annotators)}")
-    
-    # Charger les annotations
-    all_ann = {}
-    all_data = {}
-    
-    for ann, fname in annotators:
-        path = os.path.join(OUT_DIR, fname)
-        data = load_pairs_for_view(path)
-        all_data[ann] = data
-        
-        # Créer un dictionnaire de labels par paire
-        key_to_label = {}
-        for i, p in enumerate(data):
-            # Utiliser l'ID de la paire si disponible, sinon l'index
-            key = (p.get("event1_id", i), p.get("event2_id", i))
-            key_to_label[key] = p.get("label")
-        all_ann[ann] = key_to_label
-    
-    st.markdown("---")
-    st.markdown("### 📊 Kappa de Cohen")
-    
-    names = list(all_ann.keys())
-    for i, a1 in enumerate(names):
-        for a2 in names[i+1:]:
-            common = set(all_ann[a1].keys()) & set(all_ann[a2].keys())
-            valid = [k for k in common
-                     if all_ann[a1][k] is not None and all_ann[a2][k] is not None]
-            
-            if len(valid) < 10:
-                st.warning(f"⚠️ {a1} ↔ {a2} : {len(valid)} paires (min 10)")
-                continue
-            
-            l1 = [all_ann[a1][k] for k in valid]
-            l2 = [all_ann[a2][k] for k in valid]
-            
-            po = sum(x == y for x, y in zip(l1, l2)) / len(l1)
-            p1 = sum(l1) / len(l1)
-            p2 = sum(l2) / len(l2)
-            pe = p1 * p2 + (1 - p1) * (1 - p2)
-            kappa = (po - pe) / (1 - pe) if pe < 1 else 1.0
-            
-            render_kappa(a1, a2, kappa, po * 100, len(valid))
-    
-    # Désaccords
-    st.markdown("---")
-    st.markdown("### 🔍 Désaccords")
-    
-    if len(names) >= 2:
-        a1, a2 = names[0], names[1]
-        common = set(all_ann[a1].keys()) & set(all_ann[a2].keys())
-        
-        disagree = []
-        # Construire une carte de clés vers les paires
-        index_map = {}
-        for i, p in enumerate(all_data[a1]):
-            key = (p.get("event1_id", i), p.get("event2_id", i))
-            index_map[key] = p
-        
-        for k in common:
-            if (all_ann[a1][k] is not None and
-                all_ann[a2][k] is not None and
-                all_ann[a1][k] != all_ann[a2][k]):
-                p = index_map.get(k)
-                if p:
-                    disagree.append((p, all_ann[a1][k], all_ann[a2][k]))
-        
-        if disagree:
-            st.warning(f"⚠️ {len(disagree)} désaccords entre {a1} et {a2}")
-            for i, (p, l1, l2) in enumerate(disagree[:10]):
-                with st.expander(f"Désaccord {i+1}"):
-                    st.markdown(f"**E1:** {p.get('event1_text', '')}")
-                    st.markdown(f"**E2:** {p.get('event2_text', '')}")
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.markdown(f"**{a1}:** {'✅' if l1 == 1 else '❌'}")
-                    with col2:
-                        st.markdown(f"**{a2}:** {'✅' if l2 == 1 else '❌'}")
         else:
-            st.success("✅ Aucun désaccord !")
+            st.warning("Aucune annotation à exporter")
 
-# =========================
-# Main
-# =========================
+def dashboard_page():
+    """Dashboard page"""
+    username = st.session_state.username
+    gsheets = st.session_state.gsheets
+    
+    st.markdown(f"""
+    <div class="main-header">
+        <h1>📊 Tableau de bord</h1>
+        <p>Statistiques et visualisation</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Get all data
+    datasets = gsheets.get_datasets()
+    all_annotations = []
+    for dataset in datasets:
+        annotations = gsheets.get_user_annotations(username, dataset['id'])
+        all_annotations.extend(annotations)
+    
+    if not all_annotations:
+        st.info("📭 Aucune annotation trouvée")
+        return
+    
+    # Statistics
+    st.markdown("### 📈 Vos statistiques")
+    
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Annotations totales", len(all_annotations))
+    with col2:
+        datasets_annotated = len(set(ann['dataset'] for ann in all_annotations))
+        st.metric("Datasets annotés", datasets_annotated)
+    with col3:
+        causal = sum(1 for ann in all_annotations if ann.get('label') == 1)
+        st.metric("Relations causales", causal)
+    with col4:
+        avg_conf = sum(ann.get('confidence', 3) for ann in all_annotations) / len(all_annotations) if all_annotations else 0
+        st.metric("Confiance moyenne", f"{avg_conf:.1f}/5")
+    
+    # Per dataset statistics
+    st.markdown("### 📋 Par dataset")
+    
+    for dataset in datasets:
+        dataset_anns = [ann for ann in all_annotations if ann['dataset'] == dataset['id']]
+        if dataset_anns:
+            with st.expander(f"📁 {dataset['name']} ({len(dataset_anns)} annotations)"):
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    causal_rate = sum(1 for ann in dataset_anns if ann.get('label') == 1) / len(dataset_anns) * 100
+                    st.metric("Taux causal", f"{causal_rate:.1f}%")
+                with col2:
+                    avg_conf = sum(ann.get('confidence', 3) for ann in dataset_anns) / len(dataset_anns)
+                    st.metric("Confiance", f"{avg_conf:.1f}/5")
+                with col3:
+                    progress = gsheets.get_user_progress(username, dataset['id'])
+                    st.metric("Progression", f"{progress.get('total_annotated', 0)}/{dataset['pair_count']}")
+                
+                # Recent annotations
+                st.markdown("**Dernières annotations:**")
+                for ann in dataset_anns[-5:]:
+                    label_icon = "✅" if ann.get('label') == 1 else "❌"
+                    st.write(f"{label_icon} {ann.get('event1_text', '')[:50]}... → {ann.get('event2_text', '')[:50]}...")
+
+def about_page():
+    """About page"""
+    st.markdown(f"""
+    <div class="main-header">
+        <h1>ℹ️ À propos</h1>
+        <p>CausaFr - Annotation Tool</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    st.markdown("""
+    <div class="card">
+        <h3>🎯 Objectif</h3>
+        <p>Outil collaboratif d'annotation de relations causales. Toutes les données sont stockées dans Google Sheets.</p>
+        
+        <h3>🔧 Architecture</h3>
+        <p><strong>5 feuilles Google Sheets :</strong></p>
+        <ol>
+            <li><strong>users</strong> - Comptes utilisateurs</li>
+            <li><strong>datasets</strong> - Métadonnées des datasets</li>
+            <li><strong>dataset_pairs</strong> - Paires d'événements à annoter</li>
+            <li><strong>annotations</strong> - Annotations sauvegardées</li>
+            <li><strong>progress</strong> - Progression des utilisateurs</li>
+        </ol>
+        
+        <h3>🚀 Avantages</h3>
+        <ul>
+            <li>✅ Aucun fichier local nécessaire</li>
+            <li>✅ Collaboration en temps réel</li>
+            <li>✅ Données persistantes dans Google Sheets</li>
+            <li>✅ Export facile vers JSON</li>
+            <li>✅ Déploiement simple sur Streamlit Cloud</li>
+        </ul>
+        
+        <h3>📊 État de la connexion</h3>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    gsheets = st.session_state.gsheets
+    if gsheets.connected:
+        st.success("✅ Connecté à Google Sheets")
+        
+        # Quick stats
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            users = gsheets.get_all_users()
+            st.metric("Utilisateurs", len(users))
+        with col2:
+            datasets = gsheets.get_datasets()
+            st.metric("Datasets", len(datasets))
+        with col3:
+            # Count total pairs across all datasets
+            total_pairs = sum(d['pair_count'] for d in datasets)
+            st.metric("Paires totales", total_pairs)
+    else:
+        st.error(f"❌ Non connecté")
+
+# =============================================================================
+# MAIN APP
+# =============================================================================
 
 def main():
-    """Fonction principale"""
-    st.set_page_config(
-        page_title="CausaFr",
-        page_icon="🔗",
-        layout="wide",
-        initial_sidebar_state="expanded"
-    )
-    load_custom_css()
-    
-    # Initialiser la session
-    if "authenticated" not in st.session_state:
-        st.session_state.authenticated = False
+    """Main application"""
     
     if not st.session_state.authenticated:
         login_page()
         return
     
-    # Sidebar
+    # Sidebar navigation
     with st.sidebar:
         st.markdown(f"""
-        <div style="text-align: center; padding: 1.5rem 0;">
-            <div style="font-size: 2.5rem;">🔗</div>
-            <h2 style="margin: 0.5rem 0 0 0;">CausaFr</h2>
-            <p style="font-size: 0.8rem; color: #94A3B8; margin: 0;">Annotation de Relations Causales</p>
+        <div style="text-align: center; margin-bottom: 2rem;">
+            <h2>🔗 CausaFr</h2>
+            <p style="color: #666; font-size: 0.9rem;">👤 {st.session_state.username}</p>
         </div>
         """, unsafe_allow_html=True)
         
-        st.markdown("---")
-        
-        st.markdown(f"""
-        <div style="background: rgba(255,255,255,0.08); padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 1rem;">
-            <div style="display: flex; align-items: center; gap: 0.5rem;">
-                <div style="font-size: 1.2rem;">👤</div>
-                <div>
-                    <strong>{st.session_state.username}</strong><br>
-                    <small style="font-size: 0.75rem; color: #94A3B8;">Connecté</small>
-                </div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        if st.button("🚪 Déconnexion", use_container_width=True):
-            logout()
-        
-        st.markdown("---")
-        
-        mode = st.radio(
+        page = st.radio(
             "Navigation",
-            ["✏️ Annoter", "📂 Voir", "📊 IAA"],
+            ["📤 Gérer Datasets", "✏️ Annoter", "📊 Tableau de bord", "ℹ️ À propos"],
             label_visibility="collapsed"
         )
     
-    # Contenu principal
-    if mode == "✏️ Annoter":
-        with st.sidebar:
-            st.markdown("### 📁 Données")
-            if not os.path.exists(DATA_DIR):
-                st.error("❌ Dossier data/ manquant")
-                st.stop()
-            
-            datasets = [f for f in os.listdir(DATA_DIR) if f.endswith(".json")]
-            if not datasets:
-                st.error("❌ Aucun fichier JSON trouvé")
-                st.stop()
-            
-            dataset = st.selectbox(
-                "Sélectionnez un dataset",
-                datasets,
-                label_visibility="collapsed"
-            )
-            
-            # Afficher la progression
-            progress = get_user_progress(st.session_state.username, dataset)
-            if progress["total_annotated"] > 0:
-                st.info(f"""
-                **Progression :**
-                - {progress['total_annotated']} paires annotées
-                - Dernière mise à jour : {progress.get('last_updated', '')[0:10]}
-                """)
-    
-        annotate_page(st.session_state.username, dataset)
-    
-    elif mode == "📂 Voir":
-        view_page()
-    
-    elif mode == "📊 IAA":
-        iaa_page()
+    # Show selected page
+    if page == "📤 Gérer Datasets":
+        dataset_management_page()
+    elif page == "✏️ Annoter":
+        annotate_page()
+    elif page == "📊 Tableau de bord":
+        dashboard_page()
+    elif page == "ℹ️ À propos":
+        about_page()
 
 if __name__ == "__main__":
     main()
