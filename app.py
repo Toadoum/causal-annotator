@@ -1,7 +1,6 @@
 """
-CausaFr - Complete Google Sheets Annotation Tool
-Handles multiple JSON datasets with full field preservation
-Streamlit Cloud compatible version
+CausaFr - Google Sheets Annotation Tool
+Streamlit Cloud Deployment Version
 """
 
 import streamlit as st
@@ -10,317 +9,86 @@ import json
 import os
 import hashlib
 import uuid
-import re
 from datetime import datetime
-from typing import Dict, List, Optional, Any, Tuple
-from dataclasses import dataclass, asdict, field
-from io import StringIO
-import itertools
+from typing import Dict, List, Optional
 
-# =============================================================================
-# GOOGLE SHEETS CONFIGURATION - Streamlit Secrets Compatible
-# =============================================================================
-
-# Try to get from Streamlit secrets, fall back to environment variables
-def load_google_config():
-    """Load Google Sheets configuration from Streamlit secrets or environment"""
-    config = {
-        'spreadsheet_id': None,
-        'gcp_credentials': None
-    }
-    
-    # Method 1: Streamlit secrets (for cloud deployment)
-    try:
-        if hasattr(st, 'secrets'):
-            if 'GOOGLE_SHEETS' in st.secrets:
-                config['spreadsheet_id'] = st.secrets['GOOGLE_SHEETS']['spreadsheet_id']
-                
-                # Construct credentials from secrets
-                config['gcp_credentials'] = {
-                    'type': st.secrets['GOOGLE_SHEETS']['type'],
-                    'project_id': st.secrets['GOOGLE_SHEETS']['project_id'],
-                    'private_key_id': st.secrets['GOOGLE_SHEETS']['private_key_id'],
-                    'private_key': st.secrets['GOOGLE_SHEETS']['private_key'],
-                    'client_email': st.secrets['GOOGLE_SHEETS']['client_email'],
-                    'client_id': st.secrets['GOOGLE_SHEETS']['client_id'],
-                    'auth_uri': st.secrets['GOOGLE_SHEETS']['auth_uri'],
-                    'token_uri': st.secrets['GOOGLE_SHEETS']['token_uri'],
-                    'auth_provider_x509_cert_url': st.secrets['GOOGLE_SHEETS']['auth_provider_x509_cert_url'],
-                    'client_x509_cert_url': st.secrets['GOOGLE_SHEETS']['client_x509_cert_url']
-                }
-                return config
-    except Exception as e:
-        st.error(f"Error loading Streamlit secrets: {e}")
-    
-    # Method 2: Environment variables (for local development)
-    import os
-    spreadsheet_id = os.environ.get('SPREADSHEET_ID')
-    if spreadsheet_id:
-        config['spreadsheet_id'] = spreadsheet_id
-        
-        # Try to get credentials from environment
-        creds_json = os.environ.get('GOOGLE_CREDENTIALS_JSON')
-        if creds_json:
-            import json
-            config['gcp_credentials'] = json.loads(creds_json)
-        else:
-            # Try individual environment variables
-            config['gcp_credentials'] = {
-                'type': os.environ.get('GOOGLE_TYPE', 'service_account'),
-                'project_id': os.environ.get('GOOGLE_PROJECT_ID'),
-                'private_key_id': os.environ.get('GOOGLE_PRIVATE_KEY_ID'),
-                'private_key': os.environ.get('GOOGLE_PRIVATE_KEY', '').replace('\\n', '\n'),
-                'client_email': os.environ.get('GOOGLE_CLIENT_EMAIL'),
-                'client_id': os.environ.get('GOOGLE_CLIENT_ID'),
-                'auth_uri': os.environ.get('GOOGLE_AUTH_URI', 'https://accounts.google.com/o/oauth2/auth'),
-                'token_uri': os.environ.get('GOOGLE_TOKEN_URI', 'https://oauth2.googleapis.com/token'),
-                'auth_provider_x509_cert_url': os.environ.get('GOOGLE_AUTH_PROVIDER_X509_CERT_URL', 'https://www.googleapis.com/oauth2/v1/certs'),
-                'client_x509_cert_url': os.environ.get('GOOGLE_CLIENT_X509_CERT_URL')
-            }
-    
-    return config
-
-# Load configuration
-GOOGLE_CONFIG = load_google_config()
-
-# =============================================================================
-# DATA MODELS (keep as is)
-# =============================================================================
-
-@dataclass
-class OriginalPair:
-    """Original pair data from JSON files"""
-    # ... (keep all your dataclass definitions as they are)
-    # Copy all your existing dataclass definitions here
-
-# =============================================================================
-# GOOGLE SHEETS MANAGER - UPDATED FOR SECURITY
-# =============================================================================
-
+# Try to get from Streamlit secrets
 try:
-    import gspread
-    from google.oauth2.service_account import Credentials
-    GSHEETS_AVAILABLE = True
-except ImportError:
-    GSHEETS_AVAILABLE = False
-    st.error("⚠️ Install dependencies: pip install gspread google-auth")
-
-class GoogleSheetsManager:
-    """Complete Google Sheets management for multiple datasets"""
-    
-    def __init__(self):
-        self.client = None
-        self.spreadsheet = None
-        self.connected = False
-        self.error_message = ""
-        
-        # Sheet references
-        self.users_sheet = None
-        self.datasets_sheet = None
-        self.dataset_pairs_sheet = None
-        self.annotations_sheet = None
-        self.progress_sheet = None
-        
-    def connect(self) -> bool:
-        """Connect to Google Sheets"""
-        try:
-            if not GOOGLE_CONFIG['spreadsheet_id'] or not GOOGLE_CONFIG['gcp_credentials']:
-                self.error_message = "Google Sheets configuration not found. Please check your secrets.toml"
-                return False
-            
-            creds = GOOGLE_CONFIG['gcp_credentials'].copy()
-            private_key = creds['private_key']
-            
-            # Ensure proper newlines
-            private_key = private_key.replace('\\n', '\n')
-            if not private_key.startswith('-----BEGIN PRIVATE KEY-----'):
-                private_key = '-----BEGIN PRIVATE KEY-----\n' + private_key
-            if not private_key.endswith('-----END PRIVATE KEY-----'):
-                private_key = private_key + '\n-----END PRIVATE KEY-----'
-            
-            creds['private_key'] = private_key
-            
-            # Create credentials
-            credentials = Credentials.from_service_account_info(
-                creds,
-                scopes=[
-                    'https://www.googleapis.com/auth/spreadsheets',
-                    'https://www.googleapis.com/auth/drive.file'
-                ]
-            )
-            
-            # Authorize
-            self.client = gspread.authorize(credentials)
-            
-            # Open spreadsheet
-            spreadsheet_id = GOOGLE_CONFIG['spreadsheet_id']
-            self.spreadsheet = self.client.open_by_key(spreadsheet_id)
-            
-            # Setup all sheets
-            self._setup_sheets()
-            
-            self.connected = True
-            return True
-            
-        except Exception as e:
-            self.error_message = f"Connection error: {str(e)}"
-            return False
-    
-    def _setup_sheets(self):
-        """Create or get all necessary worksheets"""
-        # ... (keep your existing _setup_sheets method)
-        # Copy all your existing _setup_sheets code here
-    
-    # ... (keep all your other methods as they are)
-    # Copy all your existing methods here (users, datasets, annotations, etc.)
+    # Load config from Streamlit secrets
+    if 'GOOGLE_SHEETS' in st.secrets:
+        GOOGLE_CONFIG = {
+            'spreadsheet_id': st.secrets['GOOGLE_SHEETS']['spreadsheet_id'],
+            'gcp_credentials': {
+                'type': st.secrets['GOOGLE_SHEETS']['type'],
+                'project_id': st.secrets['GOOGLE_SHEETS']['project_id'],
+                'private_key_id': st.secrets['GOOGLE_SHEETS']['private_key_id'],
+                'private_key': st.secrets['GOOGLE_SHEETS']['private_key'].replace('\\n', '\n'),
+                'client_email': st.secrets['GOOGLE_SHEETS']['client_email'],
+                'client_id': st.secrets['GOOGLE_SHEETS']['client_id'],
+                'auth_uri': st.secrets['GOOGLE_SHEETS']['auth_uri'],
+                'token_uri': st.secrets['GOOGLE_SHEETS']['token_uri'],
+                'auth_provider_x509_cert_url': st.secrets['GOOGLE_SHEETS']['auth_provider_x509_cert_url'],
+                'client_x509_cert_url': st.secrets['GOOGLE_SHEETS']['client_x509_cert_url']
+            }
+        }
+    else:
+        st.error("Google Sheets configuration not found in secrets")
+        GOOGLE_CONFIG = None
+except Exception as e:
+    st.error(f"Error loading configuration: {e}")
+    GOOGLE_CONFIG = None
 
 # =============================================================================
 # STREAMLIT APPLICATION
 # =============================================================================
 
-# Page config
 st.set_page_config(
-    page_title="CausaFr - Multi-Dataset Annotation",
+    page_title="CausaFr - Annotation Tool",
     page_icon="🔗",
-    layout="wide",
-    initial_sidebar_state="expanded"
+    layout="wide"
 )
-
-# Custom CSS
-st.markdown("""
-<style>
-    /* ... (keep your existing CSS) */
-</style>
-""", unsafe_allow_html=True)
-
-# Initialize session state
-if 'authenticated' not in st.session_state:
-    st.session_state.authenticated = False
-    st.session_state.username = None
-    st.session_state.gsheets = None
-    st.session_state.current_dataset = None
-    st.session_state.pair_index = 0
-    st.session_state.current_pairs = []
-    st.session_state.is_admin = False
-
-# Initialize Google Sheets
-if st.session_state.gsheets is None:
-    st.session_state.gsheets = GoogleSheetsManager()
-    if not st.session_state.gsheets.connect():
-        st.error(f"❌ Connection failed: {st.session_state.gsheets.error_message}")
-        
-        # Add debug information
-        st.info("""
-        ### Debug Information:
-        
-        1. **Check if spreadsheet exists**: Make sure the spreadsheet ID is correct
-        2. **Check permissions**: Ensure the service account has edit access to the spreadsheet
-        3. **Check credentials**: Verify all credential fields are correct
-        
-        **Spreadsheet ID used**: `{}`
-        """.format(GOOGLE_CONFIG.get('spreadsheet_id', 'Not set')))
-        
-        # Quick test button
-        if st.button("🔍 Test Connection"):
-            try:
-                import gspread
-                from google.oauth2.service_account import Credentials
-                
-                creds = GOOGLE_CONFIG['gcp_credentials'].copy()
-                private_key = creds['private_key'].replace('\\n', '\n')
-                creds['private_key'] = private_key
-                
-                credentials = Credentials.from_service_account_info(
-                    creds,
-                    scopes=['https://www.googleapis.com/auth/spreadsheets']
-                )
-                
-                client = gspread.authorize(credentials)
-                spreadsheet = client.open_by_key(GOOGLE_CONFIG['spreadsheet_id'])
-                sheets = [ws.title for ws in spreadsheet.worksheets()]
-                
-                st.success(f"✅ Connection successful!")
-                st.write(f"**Spreadsheet title**: {spreadsheet.title}")
-                st.write(f"**Sheets available**: {', '.join(sheets)}")
-                
-                # Check if our required sheets exist
-                required_sheets = ['users', 'datasets', 'dataset_pairs', 'annotations', 'progress']
-                missing = [s for s in required_sheets if s not in sheets]
-                if missing:
-                    st.warning(f"⚠️ Missing sheets: {', '.join(missing)}")
-                    if st.button("🛠️ Create missing sheets"):
-                        for sheet in missing:
-                            try:
-                                spreadsheet.add_worksheet(sheet, 1000, 20)
-                                st.success(f"Created {sheet}")
-                            except:
-                                st.warning(f"Could not create {sheet}")
-                else:
-                    st.success("✅ All required sheets exist!")
-                    
-            except Exception as e:
-                st.error(f"Test failed: {e}")
-        
-        st.stop()
-
-# =============================================================================
-# PAGES (keep as is)
-# =============================================================================
-
-def login_page():
-    """Login/Register page"""
-    # ... (keep your existing login_page function)
-    # Copy all your existing login_page code here
-
-def dataset_management_page():
-    """Dataset upload and management page"""
-    # ... (keep your existing dataset_management_page function)
-    # Copy all your existing dataset_management_page code here
-
-def annotate_page():
-    """Main annotation page"""
-    # ... (keep your existing annotate_page function)
-    # Copy all your existing annotate_page code here
-
-def dashboard_page():
-    """Dashboard page"""
-    # ... (keep your existing dashboard_page function)
-    # Copy all your existing dashboard_page code here
-
-def about_page():
-    """About page"""
-    # ... (keep your existing about_page function)
-    # Copy all your existing about_page code here
 
 def main():
     """Main application"""
+    st.title("🔗 CausaFr - Annotation Tool")
     
-    if not st.session_state.authenticated:
-        login_page()
+    if GOOGLE_CONFIG is None:
+        st.error("""
+        ## ⚠️ Configuration Required
+        
+        Google Sheets is not properly configured.
+        
+        **For Streamlit Cloud Deployment:**
+        
+        1. Go to your Streamlit Cloud app
+        2. Click on "Settings" (gear icon)
+        3. Go to "Secrets" tab
+        4. Add the following secrets:
+        
+        ```toml
+        [GOOGLE_SHEETS]
+        spreadsheet_id = "1K4zUiRVOnyDuEAjzoZ5qb7B5fg9dKOdaJJjbQfDsBKw"
+        type = "service_account"
+        project_id = "machine-translation-375907"
+        private_key_id = "887c96056fc68e0e2eb9b740176735bfe7db003f"
+        private_key = \"\"\"-----BEGIN PRIVATE KEY-----\nMIIEvwIBADANBgkqhkiG9w0BAQEFAASCBKkwggSlAgEAAoIBAQCSWZ9wD1lxSVls\nIy/olVuIDnDGbttm16jBqFlRXHDmBn5yn7YuCRoKlqoCadJL/7MuE+xPiS17WYI3\nIhcWssMJfdD2DMYk+F0wGdS2FZUzNrIqWg+NiX/mUs8U3/kytxBqK8kpi1yrr/b0\nsTi1ZmvJd60f8o5UcCQ2CLbI6VZhH0shmE07q1wO8yMz4HnbSHyTyFizWxFCXqMN\n0Y6+WPBUsfj7G5pcNFtyHAsqIzoEFRuScebrPHrB2f2uvznnuODxUSJKKr+I/9NE\ndcExK3vdKvKWz84lGxxeVL5Jdw0SCH9zJFbrG/YxJixBYPtc/QsbjHs/pnoiS/tl\naRvJQU/tAgMBAAECggEACdE1wwpgjVsmgrzEhrVYL8MKOSFwGdC/Kwh8P1s0XpXS\nbyV8DtAA/XNYYbOQDhWPwzhGappw4NyjAchJZLYmo7EbLpoyQ4IenC6raHB/svEJ\nGBK1BuFRoVVuO0AAAzEpCno38w+8bm7uIcFupKqDcf8Tb7hxaEQihbZlbopKh1a8\nVVDR5AS1Cy1rPRDphckYPH+MNN/VO5AWUsV1hoEMY7b2G+mADUduzdAAyeHGH2Te\nGlRs4+I02PdDHokMZRej4lbo5CkUQ5YlwoV9zJ3PJBHRatpGWfQ0XGxynTINRGbJ\nIU/bmjA8xXbYC7FESkPBaFVdQMY/kthcFRAbg/qKsQKBgQDGTcxZp+iVv/l1hvPa\n4LdPdvEO8nSdeYuJ/4q0dg0zny+xoaBAKhyqYUWAsYIhU2pTHmQteffEYmxEG2GO\nKttH//1klVsltk+sjKYiAGdHFj4ErEqeQKpV+d8ybiFL6mtbux+AHhmFhhA5U1s9\nt5SyQp46FZG5y1r5BdwN1T9F0QKBgQC87iqnJK28I6c9/QrAKMCavhT1NLwcnjln\nEKXXCcP6CmAXsciRvyx1/YB7xkNBloHYs/YC6ZzVDPsmSn55SVyLGW50scyXf6e7\nLw3s5OJxQemnk76ExBM8pyynJPk6FvEmrtVmZZmNlUG9CNHfReBSq2+jyStW5D5y\nXxL3u5uDXQKBgQC2KgN9nLQY1EhpgTYDrAhYtC+PBoS/oEbh1uBpFETeVe4vJAUc\nzFKW5VI+fVHIIWN7xWBLMk67lZpVGj4MpivXwT3ZpyYax5X7MRzwASTedX01N7w4\nEbknz6kMH4TwwwAqPQQb4gqZ0OSYdI1NbZXoBzBotSWv4jHIrmxOPMWp8QKBgQCr\nSOGylzZLk6dUM81DWa8Em8A0bpL8/xXbsuQniNr8Hdvwn2XPfRq5/hI2JRFkrScb\naExpZ5KgNRydInx3SWN1WKEjeu6Zi0puEcL2OqxxMei73N6lT36BRq7c+lBZseL/\nxxIBu6rzCZaH4y8i1R8C1Bpqyz9Xj6Zt2nQ/1P6woQKBgQCePFKM+mTxpeADpVEF\npnGN3cQJGvC22FyjIhOOXI5JfkgzL/Ae2Q40/t15WrW/Q3737YxEm7vPbfZDfajQ\nnDpTfKxIe9mDB/MBi7IQjzwdhCdMj7gzk2TPM2XflK3CsWOtQiKYAak6QJJXjKzz\nI7HHSEOBRuAsvaYHD7nOg6KdMg==\n-----END PRIVATE KEY-----\"\"\"
+        client_email = "annotation-bot@machine-translation-375907.iam.gserviceaccount.com"
+        client_id = "107890068241269374646"
+        auth_uri = "https://accounts.google.com/o/oauth2/auth"
+        token_uri = "https://oauth2.googleapis.com/token"
+        auth_provider_x509_cert_url = "https://www.googleapis.com/oauth2/v1/certs"
+        client_x509_cert_url = "https://www.googleapis.com/robot/v1/metadata/x509/annotation-bot%40machine-translation-375907.iam.gserviceaccount.com"
+        ```
+        
+        5. Click "Save"
+        6. Restart your app
+        """)
         return
     
-    # Sidebar navigation
-    with st.sidebar:
-        st.markdown(f"""
-        <div style="text-align: center; margin-bottom: 2rem;">
-            <h2>🔗 CausaFr</h2>
-            <p style="color: #666; font-size: 0.9rem;">👤 {st.session_state.username}</p>
-            { '<p style="color: #f59e0b; font-size: 0.8rem;">👑 Administrateur</p>' if st.session_state.is_admin else '' }
-        </div>
-        """, unsafe_allow_html=True)
-        
-        pages = ["📤 Gérer Datasets", "✏️ Annoter", "📊 Tableau de bord", "ℹ️ À propos"]
-        page = st.radio("Navigation", pages, label_visibility="collapsed")
-    
-    # Show selected page
-    if page == "📤 Gérer Datasets":
-        dataset_management_page()
-    elif page == "✏️ Annoter":
-        annotate_page()
-    elif page == "📊 Tableau de bord":
-        dashboard_page()
-    elif page == "ℹ️ À propos":
-        about_page()
+    # Show app content
+    st.success("✅ Google Sheets configured successfully!")
+    st.write(f"**Spreadsheet ID**: {GOOGLE_CONFIG['spreadsheet_id']}")
+    st.write(f"**Service Account**: {GOOGLE_CONFIG['gcp_credentials']['client_email']}")
 
 if __name__ == "__main__":
     main()
