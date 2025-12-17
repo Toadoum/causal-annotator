@@ -1,7 +1,7 @@
-
 # """
 # CausaFr - Complete Google Sheets Annotation Tool
 # Streamlit Cloud Deployment Version
+# With Enhanced Export and Training Compatibility
 # """
 
 # import streamlit as st
@@ -11,7 +11,7 @@
 # import hashlib
 # import uuid
 # import re
-# from datetime import datetime
+# from datetime import datetime, timedelta
 # from typing import Dict, List, Optional, Any, Tuple
 # from dataclasses import dataclass, asdict
 # from io import StringIO
@@ -81,7 +81,7 @@
     
 #     def to_dict(self) -> Dict:
 #         """Convert to dictionary matching original JSON structure"""
-#         return {
+#         data = {
 #             "narrative_id": self.narrative_id,
 #             "event1_id": self.event1_id,
 #             "event2_id": self.event2_id,
@@ -106,6 +106,8 @@
 #             "pair_has_causal_cue": self.pair_has_causal_cue,
 #             "pair_has_temporal": self.pair_has_temporal
 #         }
+#         # Remove None values for cleaner JSON
+#         return {k: v for k, v in data.items() if v is not None}
 
 # @dataclass
 # class UserAnnotation:
@@ -323,6 +325,29 @@
     
 #     # ========== DATASET MANAGEMENT ==========
     
+#     def _validate_pair_structure(self, pair: Dict) -> Tuple[bool, str]:
+#         """Validate pair structure"""
+#         # Required fields
+#         required_fields = ['event1_text', 'event2_text']
+#         for field in required_fields:
+#             if field not in pair or not pair[field]:
+#                 return False, f"Missing required field: {field}"
+        
+#         # Validate text length
+#         if len(pair.get('event1_text', '')) > 1000 or len(pair.get('event2_text', '')) > 1000:
+#             return False, "Text too long (max 1000 characters)"
+        
+#         # Validate label if present
+#         if 'label' in pair and pair['label'] is not None:
+#             try:
+#                 label = int(pair['label'])
+#                 if label not in [0, 1]:
+#                     return False, "Label must be 0 or 1"
+#             except (ValueError, TypeError):
+#                 return False, "Invalid label format"
+        
+#         return True, ""
+    
 #     def _generate_pair_hash(self, pair_data: Dict) -> str:
 #         """Generate hash for pair data to detect duplicates"""
 #         hash_string = f"{pair_data.get('event1_text', '')}_{pair_data.get('event2_text', '')}"
@@ -373,9 +398,19 @@
             
 #             imported_count = 0
 #             skipped_count = 0
+#             invalid_count = 0
+            
+#             # Batch rows for efficiency
+#             batch_rows = []
             
 #             # Import pairs
 #             for i, pair in enumerate(pairs):
+#                 # Validate pair structure
+#                 is_valid, error_msg = self._validate_pair_structure(pair)
+#                 if not is_valid:
+#                     invalid_count += 1
+#                     continue
+                
 #                 # Generate pair hash for duplicate detection
 #                 pair_hash = self._generate_pair_hash(pair)
                 
@@ -391,11 +426,12 @@
 #                 def bool_to_int(value):
 #                     return 1 if value else 0
                 
-#                 self.dataset_pairs_sheet.append_row([
+#                 # Prepare row for batch insertion
+#                 batch_rows.append([
 #                     pair_id,
 #                     dataset_id,
-#                     pair.get('event1_text', ''),
-#                     pair.get('event2_text', ''),
+#                     pair.get('event1_text', '')[:500],
+#                     pair.get('event2_text', '')[:500],
 #                     str(pair.get('event1_id', '')),
 #                     str(pair.get('event2_id', '')),
 #                     pair.get('narrative_id', ''),
@@ -423,6 +459,15 @@
 #                 ])
                 
 #                 imported_count += 1
+                
+#                 # Batch insert every 50 rows
+#                 if len(batch_rows) >= 50:
+#                     self.dataset_pairs_sheet.append_rows(batch_rows)
+#                     batch_rows = []
+            
+#             # Insert remaining rows
+#             if batch_rows:
+#                 self.dataset_pairs_sheet.append_rows(batch_rows)
             
 #             # Update or create dataset metadata
 #             total_pairs = len(existing_pairs) + imported_count
@@ -450,6 +495,10 @@
 #                     total_pairs,
 #                     original_filename
 #                 ])
+            
+#             # Log import results
+#             if invalid_count > 0:
+#                 self.error_message = f"Imported with warnings: {invalid_count} invalid pairs skipped"
             
 #             return True, len(pairs), imported_count
             
@@ -480,8 +529,8 @@
 #             self.error_message = str(e)
 #             return []
     
-#     def get_dataset_pairs(self, dataset_id: str) -> List[OriginalPair]:
-#         """Get all pairs for a dataset"""
+#     def get_dataset_pairs(self, dataset_id: str, offset: int = 0, limit: int = None) -> List[OriginalPair]:
+#         """Get all pairs for a dataset with optional pagination"""
 #         try:
 #             records = self.dataset_pairs_sheet.get_all_records()
 #             pairs = []
@@ -532,10 +581,34 @@
             
 #             # Sort by row_index
 #             pairs.sort(key=lambda x: x.row_index)
-#             return pairs
+            
+#             # Apply pagination
+#             if limit:
+#                 return pairs[offset:offset + limit]
+#             return pairs[offset:]
 #         except Exception as e:
 #             self.error_message = str(e)
 #             return []
+    
+#     def search_pairs(self, dataset_id: str, query: str) -> List[OriginalPair]:
+#         """Search pairs by text content"""
+#         all_pairs = self.get_dataset_pairs(dataset_id)
+        
+#         if not query:
+#             return all_pairs
+        
+#         query = query.lower()
+#         results = []
+        
+#         for pair in all_pairs:
+#             if (query in pair.event1_text.lower() or 
+#                 query in pair.event2_text.lower() or
+#                 query in str(pair.event1_id).lower() or
+#                 query in str(pair.event2_id).lower() or
+#                 query in pair.narrative_id.lower()):
+#                 results.append(pair)
+        
+#         return results
     
 #     def delete_dataset(self, dataset_id: str) -> bool:
 #         """Delete a dataset and all its data"""
@@ -788,10 +861,37 @@
     
 #     # ========== EXPORT FUNCTIONALITY ==========
     
-#     def export_annotated_dataset(self, dataset_id: str, include_original: bool = True) -> Optional[Dict]:
+#     def _calculate_consensus(self, annotations: List[Dict]) -> Dict:
+#         """Calculate consensus metrics"""
+#         if not annotations:
+#             return None
+        
+#         labels = [int(a['label']) for a in annotations if a.get('label') is not None]
+#         confidences = [int(a.get('confidence', 3)) for a in annotations]
+        
+#         if not labels:
+#             return None
+        
+#         consensus = 1 if sum(labels) / len(labels) >= 0.5 else 0
+#         agreement = sum(1 for l in labels if l == consensus) / len(labels)
+        
+#         return {
+#             'consensus_label': consensus,
+#             'agreement_rate': agreement,
+#             'total_votes': len(labels),
+#             'confidence_avg': sum(confidences) / len(confidences),
+#             'distribution': {
+#                 'causal': sum(labels),
+#                 'non_causal': len(labels) - sum(labels)
+#             }
+#         }
+    
+#     def export_annotated_dataset(self, dataset_id: str, mode: str = "replace") -> Optional[Dict]:
 #         """
-#         Export annotated dataset with all original fields plus annotations
-#         Returns JSON structure matching original format
+#         Export annotated dataset with different modes:
+#         - "replace": Replace original fields with annotated values (for training)
+#         - "append": Keep original and add annotations as separate field (for review)
+#         - "consensus": Use majority vote consensus
 #         """
 #         try:
 #             # Get dataset metadata
@@ -823,34 +923,74 @@
 #                     annotations_by_pair[pair_id] = []
 #                 annotations_by_pair[pair_id].append(ann)
             
-#             # Build exported pairs
+#             # Build exported pairs based on mode
 #             exported_pairs = []
-#             for pair in original_pairs:
-#                 pair_dict = pair.to_dict()
+            
+#             for original_pair in original_pairs:
+#                 # Start with original pair data
+#                 pair_dict = original_pair.to_dict()
                 
-#                 # Add annotations if available
-#                 if pair.pair_id in annotations_by_pair:
-#                     pair_annotations = annotations_by_pair[pair.pair_id]
+#                 # Get annotations for this pair if they exist
+#                 pair_annotations = annotations_by_pair.get(original_pair.pair_id, [])
+                
+#                 if mode == "replace":
+#                     # REPLACE MODE: For training compatibility
+#                     if pair_annotations:
+#                         if len(pair_annotations) == 1:
+#                             # Single annotation - use it
+#                             ann = pair_annotations[0]
+#                             # Update only the label field
+#                             if ann.get('label') is not None:
+#                                 pair_dict['label'] = int(ann['label'])
+                            
+#                             # Update causal cue flags based on annotation
+#                             pair_dict['event1_has_causal_cue'] = bool(int(ann.get('cue1', 0)))
+#                             pair_dict['event2_has_causal_cue'] = bool(int(ann.get('cue2', 0)))
+                            
+#                             # Add annotation metadata as separate fields if needed
+#                             pair_dict['annotated_by'] = ann['username']
+#                             pair_dict['annotation_confidence'] = int(ann.get('confidence', 3))
+#                             pair_dict['annotation_notes'] = ann.get('notes', '')
+#                             pair_dict['annotated_at'] = ann.get('annotated_at', '')
+                        
+#                         elif len(pair_annotations) > 1:
+#                             # Multiple annotations - use consensus
+#                             consensus = self._calculate_consensus(pair_annotations)
+#                             if consensus:
+#                                 pair_dict['label'] = consensus['consensus_label']
+                                
+#                                 # Add consensus metadata
+#                                 pair_dict['consensus_label'] = consensus['consensus_label']
+#                                 pair_dict['agreement_rate'] = consensus['agreement_rate']
+#                                 pair_dict['total_annotators'] = consensus['total_votes']
+#                                 pair_dict['annotation_summary'] = consensus
                     
-#                     # Add annotation data
-#                     pair_dict['annotations'] = []
-#                     for ann in pair_annotations:
-#                         pair_dict['annotations'].append({
-#                             'username': ann['username'],
-#                             'cue1': bool(int(ann.get('cue1', 0))),
-#                             'cue2': bool(int(ann.get('cue2', 0))),
-#                             'label': int(ann.get('label', 0)) if ann.get('label') else None,
-#                             'confidence': int(ann.get('confidence', 3)),
-#                             'notes': ann.get('notes', ''),
-#                             'annotated_at': ann.get('annotated_at', '')
-#                         })
-                    
-#                     # Calculate consensus if multiple annotations
-#                     if len(pair_annotations) > 1:
-#                         labels = [int(a['label']) for a in pair_annotations if a.get('label')]
-#                         if labels:
-#                             pair_dict['consensus_label'] = 1 if sum(labels) / len(labels) >= 0.5 else 0
-#                             pair_dict['agreement_rate'] = f"{(sum(1 for l in labels if l == pair_dict['consensus_label']) / len(labels) * 100):.1f}%"
+#                     # Remove any existing annotations field
+#                     if 'annotations' in pair_dict:
+#                         del pair_dict['annotations']
+                
+#                 elif mode == "append":
+#                     # APPEND MODE: Keep original and add annotations as separate field
+#                     if pair_annotations:
+#                         pair_dict['annotations'] = []
+#                         for ann in pair_annotations:
+#                             pair_dict['annotations'].append({
+#                                 'username': ann['username'],
+#                                 'cue1': bool(int(ann.get('cue1', 0))),
+#                                 'cue2': bool(int(ann.get('cue2', 0))),
+#                                 'label': int(ann.get('label', 0)) if ann.get('label') is not None else None,
+#                                 'confidence': int(ann.get('confidence', 3)),
+#                                 'notes': ann.get('notes', ''),
+#                                 'annotated_at': ann.get('annotated_at', '')
+#                             })
+                
+#                 elif mode == "consensus":
+#                     # CONSENSUS MODE: Only update if strong consensus exists
+#                     if pair_annotations:
+#                         consensus = self._calculate_consensus(pair_annotations)
+#                         if consensus and consensus['agreement_rate'] >= 0.7:
+#                             pair_dict['label'] = consensus['consensus_label']
+#                             pair_dict['consensus_confidence'] = consensus['agreement_rate']
                 
 #                 exported_pairs.append(pair_dict)
             
@@ -865,7 +1005,8 @@
 #                     'exported_at': datetime.now().isoformat(),
 #                     'total_pairs': dataset_meta.pair_count,
 #                     'original_filename': dataset_meta.original_filename,
-#                     'export_format': 'annotated_full'
+#                     'export_mode': mode,
+#                     'export_format': 'annotated_replaced' if mode == "replace" else 'annotated_appended'
 #                 },
 #                 'statistics': {
 #                     'total_annotations': len(all_annotations),
@@ -877,6 +1018,65 @@
 #             }
             
 #             return export_data
+            
+#         except Exception as e:
+#             self.error_message = str(e)
+#             return None
+    
+#     def export_training_dataset(self, dataset_id: str, username: str = None) -> Optional[List[Dict]]:
+#         """
+#         Export for training - replaces original labels with user's annotations
+#         Returns list of pairs in original format with updated labels
+#         """
+#         try:
+#             # Get original pairs
+#             original_pairs = self.get_dataset_pairs(dataset_id)
+            
+#             # Get annotations
+#             if username:
+#                 # Single user export
+#                 user_annotations = self.get_user_annotations(username, dataset_id)
+#                 ann_dict = {ann.pair_id: ann for ann in user_annotations}
+#             else:
+#                 # Multi-user consensus
+#                 all_annotations = self.get_all_annotations(dataset_id)
+#                 # Group by pair_id for consensus
+#                 ann_by_pair = {}
+#                 for ann in all_annotations:
+#                     pair_id = ann['pair_id']
+#                     if pair_id not in ann_by_pair:
+#                         ann_by_pair[pair_id] = []
+#                     ann_by_pair[pair_id].append(ann)
+            
+#             training_pairs = []
+            
+#             for pair in original_pairs:
+#                 pair_data = pair.to_dict()
+                
+#                 if username:
+#                     # Single user mode
+#                     if pair.pair_id in ann_dict:
+#                         ann = ann_dict[pair.pair_id]
+#                         if ann.label is not None:
+#                             pair_data['label'] = ann.label
+#                 else:
+#                     # Consensus mode
+#                     if pair.pair_id in ann_by_pair:
+#                         annotations = ann_by_pair[pair.pair_id]
+#                         labels = [int(a['label']) for a in annotations if a.get('label') is not None]
+#                         if labels:
+#                             # Majority vote
+#                             pair_data['label'] = 1 if sum(labels) / len(labels) >= 0.5 else 0
+                
+#                 # Clean up any annotation fields that might have been added
+#                 for key in list(pair_data.keys()):
+#                     if key.startswith('annotation_') or key in ['annotations', 'annotated_by', 'consensus_label', 'agreement_rate']:
+#                         if key in pair_data:
+#                             del pair_data[key]
+                
+#                 training_pairs.append(pair_data)
+            
+#             return training_pairs
             
 #         except Exception as e:
 #             self.error_message = str(e)
@@ -895,7 +1095,7 @@
             
 #             # Group by dataset if no specific dataset
 #             if dataset_id:
-#                 datasets = [self.get_datasets()[0]]  # Get specific dataset
+#                 datasets = [d for d in self.get_datasets() if d.dataset_id == dataset_id]
 #             else:
 #                 datasets = self.get_datasets()
             
@@ -929,6 +1129,68 @@
 #             return [user['username'] for user in users]
 #         except:
 #             return []
+    
+#     def create_backup(self) -> str:
+#         """Create a backup of all data"""
+#         try:
+#             backup_data = {
+#                 'timestamp': datetime.now().isoformat(),
+#                 'users': self.users_sheet.get_all_records(),
+#                 'datasets': self.datasets_sheet.get_all_records(),
+#                 'pairs_count': len(self.dataset_pairs_sheet.get_all_records()),
+#                 'annotations_count': len(self.annotations_sheet.get_all_records()),
+#                 'progress_count': len(self.progress_sheet.get_all_records())
+#             }
+            
+#             backup_json = json.dumps(backup_data, indent=2)
+#             return backup_json
+#         except Exception as e:
+#             self.error_message = str(e)
+#             return ""
+    
+#     def calculate_annotator_quality(self, username: str) -> Dict:
+#         """Calculate annotator quality metrics"""
+#         annotations = self.get_user_annotations(username)
+        
+#         if not annotations:
+#             return None
+        
+#         # Get all annotations for comparison
+#         all_annotations = self.get_all_annotations()
+        
+#         # Group by pair_id
+#         pair_annotations = {}
+#         for ann in all_annotations:
+#             pair_id = ann['pair_id']
+#             if pair_id not in pair_annotations:
+#                 pair_annotations[pair_id] = []
+#             pair_annotations[pair_id].append(ann)
+        
+#         # Calculate agreement
+#         user_agreements = []
+#         for ann in annotations:
+#             if ann.pair_id in pair_annotations:
+#                 other_anns = [a for a in pair_annotations[ann.pair_id] 
+#                              if a['username'] != username]
+#                 if len(other_anns) >= 2:  # Need at least 2 other annotators
+#                     # Calculate consensus among others
+#                     labels = [int(a['label']) for a in other_anns if a.get('label') is not None]
+#                     if labels:
+#                         consensus = 1 if sum(labels) / len(labels) >= 0.5 else 0
+#                         if ann.label == consensus:
+#                             user_agreements.append(1)
+#                         else:
+#                             user_agreements.append(0)
+        
+#         quality_metrics = {
+#             'total_annotations': len(annotations),
+#             'avg_confidence': sum(a.confidence for a in annotations) / len(annotations),
+#             'causal_ratio': sum(1 for a in annotations if a.label == 1) / len(annotations) if annotations else 0,
+#             'agreement_rate': sum(user_agreements) / len(user_agreements) if user_agreements else 0,
+#             'datasets_annotated': len(set(a.dataset for a in annotations))
+#         }
+        
+#         return quality_metrics
 
 # # =============================================================================
 # # STREAMLIT APPLICATION
@@ -942,7 +1204,7 @@
 #     initial_sidebar_state="expanded"
 # )
 
-# # Custom CSS
+# # Custom CSS with enhancements
 # st.markdown("""
 # <style>
 #     .main-header {
@@ -959,6 +1221,15 @@
 #         padding: 1.5rem;
 #         border-radius: 5px;
 #         margin: 1rem 0;
+#         line-height: 1.6;
+#     }
+#     .sentence-box-causal {
+#         background: #e8f5e9;
+#         border-left: 4px solid #4caf50;
+#     }
+#     .sentence-box-effect {
+#         background: #e3f2fd;
+#         border-left: 4px solid #2196f3;
 #     }
 #     .card {
 #         background: white;
@@ -1042,7 +1313,63 @@
 #         background: #3b82f6;
 #         color: white;
 #     }
+#     .tag-danger {
+#         background: #ef4444;
+#         color: white;
+#     }
+#     .keyboard-shortcut {
+#         background: #e5e7eb;
+#         border-radius: 4px;
+#         padding: 2px 6px;
+#         font-family: monospace;
+#         font-size: 0.9em;
+#         margin: 0 2px;
+#     }
+#     .export-card {
+#         background: linear-gradient(135deg, #fdfcfb 0%, #e2d1c3 100%);
+#         border-radius: 10px;
+#         padding: 1.5rem;
+#         margin: 1rem 0;
+#     }
 # </style>
+# """, unsafe_allow_html=True)
+
+# # Add keyboard shortcuts script
+# st.markdown("""
+# <script>
+# document.addEventListener('keydown', function(e) {
+#     // Only trigger if not in an input field
+#     if (e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA') {
+#         if (e.key === 'ArrowLeft' || e.key === 'a') {
+#             // Previous button
+#             const prevBtn = document.querySelector('button:has(div:contains("⬅️"))');
+#             if (prevBtn && !prevBtn.disabled) prevBtn.click();
+#         } else if (e.key === 'ArrowRight' || e.key === 'd') {
+#             // Next button
+#             const nextBtn = document.querySelector('button:has(div:contains("➡️"))');
+#             if (nextBtn && !nextBtn.disabled) nextBtn.click();
+#         } else if (e.key === '1') {
+#             // Mark as causal
+#             const yesBtn = document.querySelector('input[value="1"]');
+#             if (yesBtn) yesBtn.click();
+#         } else if (e.key === '0') {
+#             // Mark as non-causal
+#             const noBtn = document.querySelector('input[value="0"]');
+#             if (noBtn) noBtn.click();
+#         } else if (e.key === 's' && (e.ctrlKey || e.metaKey)) {
+#             // Save annotation (Ctrl+S or Cmd+S)
+#             e.preventDefault();
+#             const saveBtn = document.querySelector('button:has(div:contains("💾 Enregistrer"))');
+#             if (saveBtn) saveBtn.click();
+#         } else if (e.key === ' ') {
+#             // Space for save and next
+#             e.preventDefault();
+#             const saveNextBtn = document.querySelector('button:has(div:contains("💾 & ⏭️"))');
+#             if (saveNextBtn) saveNextBtn.click();
+#         }
+#     }
+# });
+# </script>
 # """, unsafe_allow_html=True)
 
 # # Initialize session state
@@ -1054,6 +1381,19 @@
 #     st.session_state.pair_index = 0
 #     st.session_state.current_pairs = []
 #     st.session_state.is_admin = False
+#     st.session_state.last_activity = datetime.now()
+
+# # Session timeout check
+# def check_session_timeout():
+#     if 'last_activity' in st.session_state:
+#         elapsed = (datetime.now() - st.session_state.last_activity).seconds
+#         if elapsed > 3600:  # 1 hour timeout
+#             st.warning("Session expirée. Veuillez vous reconnecter.")
+#             for key in list(st.session_state.keys()):
+#                 del st.session_state[key]
+#             st.rerun()
+    
+#     st.session_state.last_activity = datetime.now()
 
 # # Check configuration
 # if GOOGLE_CONFIG is None:
@@ -1096,6 +1436,7 @@
 #                         st.session_state.authenticated = True
 #                         st.session_state.username = username
 #                         st.session_state.is_admin = st.session_state.gsheets.is_admin(username)
+#                         st.session_state.last_activity = datetime.now()
 #                         st.rerun()
 #                     else:
 #                         st.error("❌ Identifiants incorrects")
@@ -1108,9 +1449,6 @@
 #             new_pass = st.text_input("Nouveau mot de passe", type="password")
 #             confirm_pass = st.text_input("Confirmer le mot de passe", type="password")
 #             email = st.text_input("Email (optionnel)")
-            
-#             # Only admins can create admin accounts - removed from public registration
-#             # is_admin = st.checkbox("Créer comme administrateur", value=False)
             
 #             if st.button("Créer le compte", type="primary", use_container_width=True):
 #                 if new_user and new_pass:
@@ -1134,6 +1472,8 @@
 #         st.info("Veuillez contacter un administrateur si vous avez besoin d'accéder à cette fonctionnalité.")
 #         return
     
+#     check_session_timeout()
+    
 #     st.markdown("""
 #     <div class="main-header">
 #         <h1>📁 Gestion des Datasets</h1>
@@ -1144,7 +1484,7 @@
     
 #     gsheets = st.session_state.gsheets
     
-#     tab1, tab2, tab3 = st.tabs(["📤 Importer Dataset", "📋 Datasets Disponibles", "🗑️ Gestion"])
+#     tab1, tab2, tab3, tab4 = st.tabs(["📤 Importer Dataset", "📋 Datasets Disponibles", "🧠 Export Training", "🗑️ Gestion"])
     
 #     with tab1:
 #         st.markdown("### Importer un Dataset JSON")
@@ -1292,7 +1632,7 @@
 #                     with col2:
 #                         # Preview pairs
 #                         if st.button(f"👁️ Aperçu", key=f"preview_{dataset.dataset_id}"):
-#                             pairs = gsheets.get_dataset_pairs(dataset.dataset_id)
+#                             pairs = gsheets.get_dataset_pairs(dataset.dataset_id, limit=5)
 #                             if pairs:
 #                                 st.info(f"📋 {len(pairs)} paires chargées")
 #                                 # Show first 3 pairs
@@ -1319,20 +1659,133 @@
 #                     with col3:
 #                         # Export button
 #                         if st.button(f"📥 Exporter", key=f"export_{dataset.dataset_id}"):
-#                             export_data = gsheets.export_annotated_dataset(dataset.dataset_id)
-#                             if export_data:
-#                                 json_str = json.dumps(export_data, indent=2, ensure_ascii=False)
-#                                 st.download_button(
-#                                     "⬇️ Télécharger JSON complet",
-#                                     json_str,
-#                                     file_name=f"causafr_{dataset.dataset_id}_{datetime.now().strftime('%Y%m%d')}.json",
-#                                     mime="application/json",
-#                                     key=f"download_{dataset.dataset_id}"
+#                             with st.expander("Options d'export"):
+#                                 export_mode = st.selectbox(
+#                                     "Format",
+#                                     ["Replace (for training)", "Append (for review)", "Consensus"],
+#                                     key=f"mode_{dataset.dataset_id}"
 #                                 )
-#                             else:
-#                                 st.error(f"Erreur: {gsheets.error_message}")
+                                
+#                                 mode_map = {
+#                                     "Replace (for training)": "replace",
+#                                     "Append (for review)": "append",
+#                                     "Consensus": "consensus"
+#                                 }
+                                
+#                                 export_data = gsheets.export_annotated_dataset(dataset.dataset_id, mode=mode_map[export_mode])
+#                                 if export_data:
+#                                     json_str = json.dumps(export_data['pairs'], indent=2, ensure_ascii=False)
+#                                     st.download_button(
+#                                         "⬇️ Télécharger JSON complet",
+#                                         json_str,
+#                                         file_name=f"causafr_{dataset.dataset_id}_{mode_map[export_mode]}_{datetime.now().strftime('%Y%m%d')}.json",
+#                                         mime="application/json",
+#                                         key=f"download_{dataset.dataset_id}"
+#                                     )
+                                    
+#                                     # Show statistics
+#                                     st.json(export_data['statistics'])
+#                                 else:
+#                                     st.error(f"Erreur: {gsheets.error_message}")
     
 #     with tab3:
+#         st.markdown("### 🧠 Export pour Entraînement")
+#         st.markdown("""
+#         <div class="export-card">
+#             <h4>📊 Export Format</h4>
+#             <p>Exportez des données prêtes pour l'entraînement de modèle:</p>
+#             <ul>
+#                 <li><strong>Structure originale</strong> préservée</li>
+#                 <li><strong>Labels remplacés</strong> par annotations</li>
+#                 <li><strong>Pas de champs supplémentaires</strong></li>
+#                 <li><strong>JSON identique</strong> à l'import original</li>
+#             </ul>
+#         </div>
+#         """, unsafe_allow_html=True)
+        
+#         datasets = gsheets.get_datasets()
+#         if not datasets:
+#             st.info("Aucun dataset disponible")
+#             return
+        
+#         dataset_options = {f"{d.name} ({d.pair_count} paires)": d.dataset_id for d in datasets}
+#         selected_display = st.selectbox("Sélectionner un dataset", list(dataset_options.keys()))
+#         selected_id = dataset_options[selected_display]
+        
+#         selected_dataset = None
+#         for ds in datasets:
+#             if ds.dataset_id == selected_id:
+#                 selected_dataset = ds
+#                 break
+        
+#         if selected_dataset:
+#             # Export options
+#             col1, col2 = st.columns(2)
+#             with col1:
+#                 export_mode = st.selectbox(
+#                     "Mode d'export",
+#                     ["Consensus (tous les utilisateurs)", "Utilisateur spécifique"],
+#                     help="Consensus: vote majoritaire de tous les annotateurs. Spécifique: annotations d'un utilisateur"
+#                 )
+            
+#             with col2:
+#                 if export_mode == "Utilisateur spécifique":
+#                     users = gsheets.get_all_users()
+#                     export_user = st.selectbox("Annotateur", users)
+#                 else:
+#                     export_user = None
+            
+#             # Statistics
+#             annotations = gsheets.get_all_annotations(selected_id)
+#             unique_users = len(set(a['username'] for a in annotations))
+            
+#             st.markdown("#### 📊 Statistiques du dataset")
+#             col1, col2, col3 = st.columns(3)
+#             with col1:
+#                 st.metric("Paires totales", selected_dataset.pair_count)
+#             with col2:
+#                 st.metric("Annotations", len(annotations))
+#             with col3:
+#                 st.metric("Annotateurs", unique_users)
+            
+#             # Export button
+#             if st.button("🎯 Exporter pour l'entraînement", type="primary"):
+#                 with st.spinner("Génération de l'export..."):
+#                     if export_user:
+#                         training_data = gsheets.export_training_dataset(selected_id, export_user)
+#                         user_label = export_user
+#                     else:
+#                         training_data = gsheets.export_training_dataset(selected_id)
+#                         user_label = "consensus"
+                    
+#                     if training_data:
+#                         # Count updated labels
+#                         original_pairs = gsheets.get_dataset_pairs(selected_id)
+#                         updated_count = 0
+#                         for i, pair in enumerate(training_data):
+#                             if i < len(original_pairs):
+#                                 if pair.get('label') != original_pairs[i].label:
+#                                     updated_count += 1
+                        
+#                         json_str = json.dumps(training_data, indent=2, ensure_ascii=False)
+                        
+#                         st.download_button(
+#                             "⬇️ Télécharger JSON d'entraînement",
+#                             json_str,
+#                             file_name=f"causafr_training_{selected_id}_{user_label}_{datetime.now().strftime('%Y%m%d')}.json",
+#                             mime="application/json",
+#                             key=f"training_download_{selected_id}"
+#                         )
+                        
+#                         st.success(f"✅ {updated_count}/{len(training_data)} labels mis à jour")
+                        
+#                         # Show sample
+#                         with st.expander("👁️ Aperçu des données"):
+#                             st.json(training_data[0] if training_data else {})
+#                     else:
+#                         st.error(f"Erreur: {gsheets.error_message}")
+    
+#     with tab4:
 #         st.markdown("### 🗑️ Gestion des Datasets (Admin)")
         
 #         datasets = gsheets.get_datasets()
@@ -1376,6 +1829,20 @@
 #                 completion = (len(set(a['pair_id'] for a in annotations)) / selected_dataset.pair_count * 100) if selected_dataset.pair_count > 0 else 0
 #                 st.metric("Taux d'annotation", f"{completion:.1f}%")
             
+#             # Backup option
+#             st.markdown("#### 💾 Sauvegarde")
+#             if st.button("📋 Créer une sauvegarde", key=f"backup_{selected_id}"):
+#                 backup = gsheets.create_backup()
+#                 if backup:
+#                     st.download_button(
+#                         "⬇️ Télécharger la sauvegarde",
+#                         backup,
+#                         file_name=f"causafr_backup_{selected_id}_{datetime.now().strftime('%Y%m%d')}.json",
+#                         mime="application/json"
+#                     )
+#                 else:
+#                     st.error(f"Erreur: {gsheets.error_message}")
+            
 #             # Danger zone
 #             st.markdown("#### ⚠️ Zone de danger")
 #             st.warning("Les actions suivantes sont irréversibles")
@@ -1390,6 +1857,8 @@
 
 # def annotate_page():
 #     """Main annotation page"""
+#     check_session_timeout()
+    
 #     username = st.session_state.username
 #     gsheets = st.session_state.gsheets
     
@@ -1423,6 +1892,20 @@
 #             st.session_state.current_dataset = selected_id
 #             st.session_state.pair_index = 0
 #             st.session_state.current_pairs = []
+        
+#         # Search functionality
+#         with st.expander("🔍 Recherche", expanded=False):
+#             search_query = st.text_input("Rechercher dans le texte")
+#             if search_query:
+#                 search_results = gsheets.search_pairs(selected_id, search_query)
+#                 if search_results:
+#                     st.info(f"📋 {len(search_results)} résultats trouvés")
+#                     for i, pair in enumerate(search_results[:5]):
+#                         if st.button(f"{pair.event1_text[:50]}...", key=f"search_{i}"):
+#                             st.session_state.pair_index = pair.row_index
+#                             st.rerun()
+#                 else:
+#                     st.warning("Aucun résultat")
         
 #         # Load dataset pairs
 #         if not st.session_state.current_pairs:
@@ -1464,6 +1947,17 @@
 #         st.markdown(f'<div class="progress-bar" style="width: {progress_pct}%"></div>', unsafe_allow_html=True)
 #         st.caption(f"{annotated_count}/{total_pairs} ({progress_pct:.1f}%)")
         
+#         # Keyboard shortcuts help
+#         with st.expander("⌨️ Raccourcis clavier", expanded=False):
+#             st.markdown("""
+#             - **← / A** : Paire précédente
+#             - **→ / D** : Paire suivante  
+#             - **1** : Marquer comme causal
+#             - **0** : Marquer comme non-causal
+#             - **Ctrl+S / Cmd+S** : Sauvegarder
+#             - **Espace** : Sauvegarder et suivant
+#             """)
+        
 #         # Navigation
 #         st.markdown("### 🧭 Navigation")
 #         jump_to = st.number_input("Aller à", 1, total_pairs, st.session_state.pair_index + 1)
@@ -1481,19 +1975,40 @@
 #                     st.rerun()
 #                     break
         
-#         # Export button in sidebar
+#         # Export section
 #         st.markdown("---")
-#         if st.button("📥 Exporter ce dataset", use_container_width=True):
-#             export_data = gsheets.export_annotated_dataset(selected_id)
-#             if export_data:
-#                 json_str = json.dumps(export_data, indent=2, ensure_ascii=False)
-#                 st.download_button(
-#                     "⬇️ Télécharger JSON annoté",
-#                     json_str,
-#                     file_name=f"causafr_{selected_id}_{datetime.now().strftime('%Y%m%d')}.json",
-#                     mime="application/json",
-#                     use_container_width=True
-#                 )
+#         with st.expander("📥 Export", expanded=False):
+#             export_mode = st.selectbox(
+#                 "Format d'export",
+#                 ["Replace (pour entraînement)", "Append (pour revue)", "Consensus"],
+#                 help="Replace: Met à jour les labels directement. Append: Garde les annotations séparées."
+#             )
+            
+#             mode_map = {
+#                 "Replace (pour entraînement)": "replace",
+#                 "Append (pour revue)": "append",
+#                 "Consensus": "consensus"
+#             }
+            
+#             if st.button("📤 Exporter ce dataset", use_container_width=True):
+#                 export_data = gsheets.export_annotated_dataset(selected_id, mode=mode_map[export_mode])
+#                 if export_data:
+#                     json_str = json.dumps(export_data['pairs'], indent=2, ensure_ascii=False)
+                    
+#                     # Create download button
+#                     st.download_button(
+#                         "⬇️ Télécharger JSON",
+#                         json_str,
+#                         file_name=f"causafr_{selected_id}_{mode_map[export_mode]}_{datetime.now().strftime('%Y%m%d')}.json",
+#                         mime="application/json",
+#                         use_container_width=True
+#                     )
+                    
+#                     # Show statistics
+#                     with st.expander("📊 Statistiques d'export"):
+#                         st.json(export_data['statistics'])
+#                 else:
+#                     st.error(f"Erreur: {gsheets.error_message}")
         
 #         st.markdown("---")
 #         if st.button("🚪 Déconnexion", use_container_width=True):
@@ -1530,10 +2045,11 @@
     
 #     if existing_annotations:
 #         existing = existing_annotations[0]
+#         label_text = "✅ Causal" if existing.label == 1 else "❌ Non causal" if existing.label == 0 else "❓ Non décidé"
 #         st.markdown(f"""
 #         <div class="alert alert-warning">
 #             ✏️ <strong>Déjà annotée</strong> le {existing.annotated_at[:16]}
-#             (Confidence: {existing.confidence}/5 - { '✅ Causal' if existing.label == 1 else '❌ Non causal'})
+#             (Confiance: {existing.confidence}/5 - {label_text})
 #         </div>
 #         """, unsafe_allow_html=True)
     
@@ -1581,14 +2097,14 @@
     
 #     with col1:
 #         st.markdown("#### 🔵 Événement 1 (Cause)")
-#         st.markdown(f'<div class="sentence-box">{current_pair.event1_text}</div>', unsafe_allow_html=True)
+#         st.markdown(f'<div class="sentence-box sentence-box-causal">{current_pair.event1_text}</div>', unsafe_allow_html=True)
 #         cue1 = st.checkbox("Marqueur causal explicite", 
 #                           value=existing_annotations[0].cue1 if existing_annotations else False,
 #                           key="cue1")
     
 #     with col2:
 #         st.markdown("#### 🟢 Événement 2 (Effet)")
-#         st.markdown(f'<div class="sentence-box">{current_pair.event2_text}</div>', unsafe_allow_html=True)
+#         st.markdown(f'<div class="sentence-box sentence-box-effect">{current_pair.event2_text}</div>', unsafe_allow_html=True)
 #         cue2 = st.checkbox("Marqueur causal explicite",
 #                           value=existing_annotations[0].cue2 if existing_annotations else False,
 #                           key="cue2")
@@ -1610,7 +2126,7 @@
 #         label = st.radio(
 #             "Décision",
 #             [1, 0],
-#             index=0 if current_label == 1 else 1,
+#             index=0 if current_label == 1 else (1 if current_label == 0 else 0),
 #             format_func=lambda x: "✅ OUI - Relation causale" if x == 1 else "❌ NON - Pas de relation",
 #             key="label"
 #         )
@@ -1628,12 +2144,12 @@
 #     col1, col2, col3, col4 = st.columns([1, 2, 2, 1])
     
 #     with col1:
-#         if st.button("⬅️", disabled=idx == 0, use_container_width=True):
+#         if st.button("⬅️", disabled=idx == 0, use_container_width=True, help="Paire précédente (← ou A)"):
 #             st.session_state.pair_index -= 1
 #             st.rerun()
     
 #     with col2:
-#         if st.button("💾 Enregistrer", type="primary", use_container_width=True):
+#         if st.button("💾 Enregistrer", type="primary", use_container_width=True, help="Sauvegarder (Ctrl+S)"):
 #             annotation = UserAnnotation(
 #                 id="",
 #                 pair_id=current_pair.pair_id,
@@ -1661,7 +2177,7 @@
 #                 st.error(f"❌ Erreur: {gsheets.error_message}")
     
 #     with col3:
-#         if st.button("💾 & ⏭️ Suivant", use_container_width=True):
+#         if st.button("💾 & ⏭️ Suivant", use_container_width=True, help="Sauvegarder et suivant (Espace)"):
 #             annotation = UserAnnotation(
 #                 id="",
 #                 pair_id=current_pair.pair_id,
@@ -1690,12 +2206,14 @@
 #                 st.error(f"❌ Erreur: {gsheets.error_message}")
     
 #     with col4:
-#         if st.button("➡️", disabled=idx >= total_pairs - 1, use_container_width=True):
+#         if st.button("➡️", disabled=idx >= total_pairs - 1, use_container_width=True, help="Paire suivante (→ ou D)"):
 #             st.session_state.pair_index += 1
 #             st.rerun()
 
 # def dashboard_page():
 #     """Dashboard page"""
+#     check_session_timeout()
+    
 #     username = st.session_state.username
 #     gsheets = st.session_state.gsheets
     
@@ -1730,6 +2248,9 @@
 #     user_annotations = gsheets.get_user_annotations(username)
     
 #     if user_annotations:
+#         # Calculate quality metrics
+#         quality_metrics = gsheets.calculate_annotator_quality(username)
+        
 #         col1, col2, col3, col4 = st.columns(4)
 #         with col1:
 #             st.metric("Vos annotations", len(user_annotations))
@@ -1742,6 +2263,16 @@
 #         with col4:
 #             avg_conf = sum(a.confidence for a in user_annotations) / len(user_annotations) if user_annotations else 0
 #             st.metric("Confiance moyenne", f"{avg_conf:.1f}/5")
+        
+#         if quality_metrics and quality_metrics['agreement_rate'] > 0:
+#             st.markdown("#### 🎯 Qualité d'annotation")
+#             col1, col2, col3 = st.columns(3)
+#             with col1:
+#                 st.metric("Taux d'accord", f"{quality_metrics['agreement_rate']*100:.1f}%")
+#             with col2:
+#                 st.metric("Ratio causal", f"{quality_metrics['causal_ratio']*100:.1f}%")
+#             with col3:
+#                 st.metric("Confiance moyenne", f"{quality_metrics['avg_confidence']:.1f}/5")
     
 #     # Dataset statistics
 #     st.markdown("### 📋 Statistiques par dataset")
@@ -1771,21 +2302,37 @@
 #                 else:
 #                     st.metric("Votre progression", "0%")
             
-#             # Export button
-#             if st.button(f"📥 Exporter {dataset.name}", key=f"export_dash_{dataset.dataset_id}"):
-#                 export_data = gsheets.export_annotated_dataset(dataset.dataset_id)
-#                 if export_data:
-#                     json_str = json.dumps(export_data, indent=2, ensure_ascii=False)
-#                     st.download_button(
-#                         "⬇️ Télécharger",
-#                         json_str,
-#                         file_name=f"causafr_{dataset.dataset_id}_{datetime.now().strftime('%Y%m%d')}.json",
-#                         mime="application/json",
-#                         key=f"download_dash_{dataset.dataset_id}"
-#                     )
+#             # Export buttons
+#             col1, col2 = st.columns(2)
+#             with col1:
+#                 if st.button(f"📥 Exporter {dataset.name}", key=f"export_dash_{dataset.dataset_id}"):
+#                     export_data = gsheets.export_annotated_dataset(dataset.dataset_id, mode="replace")
+#                     if export_data:
+#                         json_str = json.dumps(export_data['pairs'], indent=2, ensure_ascii=False)
+#                         st.download_button(
+#                             "⬇️ Télécharger",
+#                             json_str,
+#                             file_name=f"causafr_{dataset.dataset_id}_training_{datetime.now().strftime('%Y%m%d')}.json",
+#                             mime="application/json",
+#                             key=f"download_dash_{dataset.dataset_id}"
+#                         )
+#             with col2:
+#                 if st.button(f"🧠 Export entraînement", key=f"training_dash_{dataset.dataset_id}"):
+#                     training_data = gsheets.export_training_dataset(dataset.dataset_id)
+#                     if training_data:
+#                         json_str = json.dumps(training_data, indent=2, ensure_ascii=False)
+#                         st.download_button(
+#                             "⬇️ Télécharger",
+#                             json_str,
+#                             file_name=f"causafr_training_{dataset.dataset_id}_{datetime.now().strftime('%Y%m%d')}.json",
+#                             mime="application/json",
+#                             key=f"training_download_dash_{dataset.dataset_id}"
+#                         )
 
 # def about_page():
 #     """About page"""
+#     check_session_timeout()
+    
 #     gsheets = st.session_state.gsheets
     
 #     st.markdown(f"""
@@ -1823,6 +2370,29 @@
 #         with col4:
 #             users = gsheets.get_all_users()
 #             st.metric("Utilisateurs", len(users))
+        
+#         # System info
+#         st.markdown("### ⚙️ Informations système")
+#         st.code(f"""
+#         Dernière vérification: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+#         Nombre de feuilles: {len(gsheets.spreadsheet.worksheets())}
+#         Connecté en tant que: {st.session_state.username}
+#         Rôle: {'Administrateur' if st.session_state.is_admin else 'Annotateur'}
+#         """)
+        
+#         # Backup
+#         st.markdown("### 💾 Sauvegarde")
+#         if st.button("Créer une sauvegarde complète"):
+#             backup = gsheets.create_backup()
+#             if backup:
+#                 st.download_button(
+#                     "⬇️ Télécharger la sauvegarde",
+#                     backup,
+#                     file_name=f"causafr_full_backup_{datetime.now().strftime('%Y%m%d')}.json",
+#                     mime="application/json"
+#                 )
+#             else:
+#                 st.error(f"Erreur: {gsheets.error_message}")
 #     else:
 #         st.error(f"❌ Non connecté: {gsheets.error_message}")
 
@@ -1870,11 +2440,10 @@
 
 
 
-
 """
 CausaFr - Complete Google Sheets Annotation Tool
 Streamlit Cloud Deployment Version
-With Enhanced Export and Training Compatibility
+With Enhanced Export and Performance Optimizations
 """
 
 import streamlit as st
@@ -1884,6 +2453,7 @@ import os
 import hashlib
 import uuid
 import re
+import time
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass, asdict
@@ -2016,7 +2586,7 @@ class DatasetMetadata:
     original_filename: str = ""
 
 # =============================================================================
-# GOOGLE SHEETS MANAGER
+# OPTIMIZED GOOGLE SHEETS MANAGER WITH CACHING
 # =============================================================================
 
 try:
@@ -2027,8 +2597,8 @@ except ImportError:
     GSHEETS_AVAILABLE = False
     st.error("⚠️ Install dependencies: pip install gspread google-auth")
 
-class GoogleSheetsManager:
-    """Complete Google Sheets management for multiple datasets"""
+class OptimizedGoogleSheetsManager:
+    """Complete Google Sheets management with performance optimizations"""
     
     def __init__(self):
         self.client = None
@@ -2043,6 +2613,31 @@ class GoogleSheetsManager:
         self.annotations_sheet = None
         self.progress_sheet = None
         
+        # Cache system
+        self._cache = {
+            'datasets': {'data': None, 'timestamp': 0},
+            'pairs': {},  # dataset_id -> {'data': [], 'timestamp': 0}
+            'annotations': {},  # (username, dataset_id) -> {'data': [], 'timestamp': 0}
+            'all_annotations': {},  # dataset_id -> {'data': [], 'timestamp': 0}
+            'progress': {}  # (username, dataset_id) -> {'data': {}, 'timestamp': 0}
+        }
+        self._cache_ttl = 300  # 5 minutes cache TTL
+    
+    def _is_cache_valid(self, cache_entry: Dict) -> bool:
+        """Check if cache entry is still valid"""
+        if cache_entry['data'] is None:
+            return False
+        return (time.time() - cache_entry['timestamp']) < self._cache_ttl
+    
+    def _clear_cache(self, cache_key: str = None):
+        """Clear cache or specific cache entry"""
+        if cache_key:
+            if cache_key in self._cache:
+                self._cache[cache_key] = {'data': None, 'timestamp': 0}
+        else:
+            for key in self._cache:
+                self._cache[key] = {'data': None, 'timestamp': 0}
+    
     def connect(self) -> bool:
         """Connect to Google Sheets"""
         if GOOGLE_CONFIG is None:
@@ -2369,6 +2964,11 @@ class GoogleSheetsManager:
                     original_filename
                 ])
             
+            # Clear cache for this dataset
+            self._clear_cache('datasets')
+            if dataset_id in self._cache['pairs']:
+                del self._cache['pairs'][dataset_id]
+            
             # Log import results
             if invalid_count > 0:
                 self.error_message = f"Imported with warnings: {invalid_count} invalid pairs skipped"
@@ -2382,8 +2982,13 @@ class GoogleSheetsManager:
             self.error_message = str(e)
             return False, 0, 0
     
-    def get_datasets(self) -> List[DatasetMetadata]:
-        """Get all available datasets"""
+    def get_datasets(self, force_refresh: bool = False) -> List[DatasetMetadata]:
+        """Get all available datasets with caching"""
+        cache_entry = self._cache['datasets']
+        
+        if not force_refresh and self._is_cache_valid(cache_entry):
+            return cache_entry['data']
+        
         try:
             records = self.datasets_sheet.get_all_records()
             datasets = []
@@ -2397,33 +3002,118 @@ class GoogleSheetsManager:
                     pair_count=int(r['pair_count']) if r['pair_count'] else 0,
                     original_filename=r.get('original_filename', '')
                 ))
+            
+            self._cache['datasets'] = {
+                'data': datasets,
+                'timestamp': time.time()
+            }
             return datasets
         except Exception as e:
             self.error_message = str(e)
             return []
     
-    def get_dataset_pairs(self, dataset_id: str, offset: int = 0, limit: int = None) -> List[OriginalPair]:
-        """Get all pairs for a dataset with optional pagination"""
+    def get_dataset_pairs(self, dataset_id: str, force_refresh: bool = False) -> List[OriginalPair]:
+        """Get all pairs for a dataset with caching"""
+        if dataset_id not in self._cache['pairs']:
+            self._cache['pairs'][dataset_id] = {'data': None, 'timestamp': 0}
+        
+        cache_entry = self._cache['pairs'][dataset_id]
+        
+        if not force_refresh and self._is_cache_valid(cache_entry):
+            return cache_entry['data']
+        
         try:
-            records = self.dataset_pairs_sheet.get_all_records()
+            # Use batch reading for better performance
+            all_values = self.dataset_pairs_sheet.get_all_values()
             pairs = []
             
+            # Skip header row
+            for row in all_values[1:]:
+                if len(row) < 2 or row[1] != dataset_id:  # row[1] = dataset column
+                    continue
+                
+                # Helper function to convert string to bool
+                def str_to_bool(value):
+                    if isinstance(value, str):
+                        return value.strip().lower() in ['true', '1', 'yes', 'y']
+                    return bool(value)
+                
+                # Helper function to convert to int if possible
+                def to_int(value):
+                    try:
+                        return int(value)
+                    except:
+                        return None
+                
+                # Map row indices to fields
+                pairs.append(OriginalPair(
+                    pair_id=row[0] if len(row) > 0 else "",
+                    dataset=row[1] if len(row) > 1 else "",
+                    event1_text=row[2] if len(row) > 2 else "",
+                    event2_text=row[3] if len(row) > 3 else "",
+                    event1_id=row[4] if len(row) > 4 else "",
+                    event2_id=row[5] if len(row) > 5 else "",
+                    narrative_id=row[6] if len(row) > 6 else "",
+                    event1_category=row[7] if len(row) > 7 else "",
+                    event2_category=row[8] if len(row) > 8 else "",
+                    label=to_int(row[9]) if len(row) > 9 else None,
+                    is_hard_negative=str_to_bool(row[10]) if len(row) > 10 else False,
+                    event1_has_causal_cue=str_to_bool(row[11]) if len(row) > 11 else False,
+                    event1_causal_cue_type=row[12] if len(row) > 12 else None,
+                    event1_causal_cue_text=row[13] if len(row) > 13 else None,
+                    event1_has_temporal=str_to_bool(row[14]) if len(row) > 14 else False,
+                    event1_temporal_type=row[15] if len(row) > 15 else None,
+                    event1_temporal_text=row[16] if len(row) > 16 else None,
+                    event2_has_causal_cue=str_to_bool(row[17]) if len(row) > 17 else False,
+                    event2_causal_cue_type=row[18] if len(row) > 18 else None,
+                    event2_causal_cue_text=row[19] if len(row) > 19 else None,
+                    event2_has_temporal=str_to_bool(row[20]) if len(row) > 20 else False,
+                    event2_temporal_type=row[21] if len(row) > 21 else None,
+                    event2_temporal_text=row[22] if len(row) > 22 else None,
+                    pair_has_causal_cue=str_to_bool(row[23]) if len(row) > 23 else False,
+                    pair_has_temporal=str_to_bool(row[24]) if len(row) > 24 else False,
+                    row_index=int(row[25]) if len(row) > 25 and row[25] else 0
+                ))
+            
+            # Sort by row_index
+            pairs.sort(key=lambda x: x.row_index)
+            
+            self._cache['pairs'][dataset_id] = {
+                'data': pairs,
+                'timestamp': time.time()
+            }
+            return pairs
+        except Exception as e:
+            self.error_message = str(e)
+            return []
+    
+    def get_single_pair(self, dataset_id: str, pair_id: str) -> Optional[OriginalPair]:
+        """Get a single pair directly without loading all pairs"""
+        try:
+            # Try to find in cache first
+            if dataset_id in self._cache['pairs'] and self._cache['pairs'][dataset_id]['data']:
+                pairs = self._cache['pairs'][dataset_id]['data']
+                for pair in pairs:
+                    if pair.pair_id == pair_id:
+                        return pair
+            
+            # If not in cache, search directly in Google Sheets
+            records = self.dataset_pairs_sheet.get_all_records()
             for record in records:
-                if record['dataset'] == dataset_id:
-                    # Helper function to convert string to bool
+                if record['dataset'] == dataset_id and record['pair_id'] == pair_id:
+                    # Convert record to OriginalPair
                     def str_to_bool(value):
                         if isinstance(value, str):
                             return value.strip().lower() in ['true', '1', 'yes', 'y']
                         return bool(value)
                     
-                    # Helper function to convert to int if possible
                     def to_int(value):
                         try:
                             return int(value)
                         except:
                             return None
                     
-                    pairs.append(OriginalPair(
+                    return OriginalPair(
                         pair_id=record['pair_id'],
                         dataset=record['dataset'],
                         event1_text=record['event1_text'],
@@ -2450,18 +3140,11 @@ class GoogleSheetsManager:
                         pair_has_causal_cue=str_to_bool(record.get('pair_has_causal_cue', False)),
                         pair_has_temporal=str_to_bool(record.get('pair_has_temporal', False)),
                         row_index=int(record.get('row_index', 0)) if record.get('row_index') else 0
-                    ))
-            
-            # Sort by row_index
-            pairs.sort(key=lambda x: x.row_index)
-            
-            # Apply pagination
-            if limit:
-                return pairs[offset:offset + limit]
-            return pairs[offset:]
+                    )
+            return None
         except Exception as e:
             self.error_message = str(e)
-            return []
+            return None
     
     def search_pairs(self, dataset_id: str, query: str) -> List[OriginalPair]:
         """Search pairs by text content"""
@@ -2527,76 +3210,28 @@ class GoogleSheetsManager:
             for row in sorted(progress_rows_to_delete, reverse=True):
                 self.progress_sheet.delete_rows(row)
             
+            # Clear cache
+            self._clear_cache()
+            
             return True
         except Exception as e:
             self.error_message = str(e)
             return False
     
-    # ========== ANNOTATION MANAGEMENT ==========
+    # ========== OPTIMIZED ANNOTATION MANAGEMENT ==========
     
-    def save_annotation(self, annotation: UserAnnotation) -> str:
-        """Save an annotation"""
-        try:
-            ann_id = str(uuid.uuid4())[:8]
-            
-            # Generate hash for duplicate detection
-            hash_string = f"{annotation.pair_id}_{annotation.username}_{annotation.annotated_at}"
-            annotation_hash = hashlib.md5(hash_string.encode()).hexdigest()[:8]
-            
-            # Check if annotation already exists for this user and pair
-            existing_annotations = self.annotations_sheet.get_all_records()
-            for existing in existing_annotations:
-                if (existing['pair_id'] == annotation.pair_id and 
-                    existing['username'] == annotation.username):
-                    # Update existing annotation
-                    row_num = existing_annotations.index(existing) + 2
-                    self.annotations_sheet.update(f'A{row_num}:P{row_num}', [[
-                        ann_id,
-                        annotation.pair_id,
-                        annotation.dataset,
-                        annotation.username,
-                        annotation.event1_text[:500],
-                        annotation.event2_text[:500],
-                        annotation.cue1,
-                        annotation.cue2,
-                        annotation.label if annotation.label is not None else "",
-                        annotation.confidence,
-                        annotation.notes[:200],
-                        annotation.annotated_at or datetime.now().isoformat(),
-                        annotation.event1_id,
-                        annotation.event2_id,
-                        "0",  # not exported
-                        annotation_hash
-                    ]])
-                    return ann_id
-            
-            # Create new annotation
-            self.annotations_sheet.append_row([
-                ann_id,
-                annotation.pair_id,
-                annotation.dataset,
-                annotation.username,
-                annotation.event1_text[:500],
-                annotation.event2_text[:500],
-                annotation.cue1,
-                annotation.cue2,
-                annotation.label if annotation.label is not None else "",
-                annotation.confidence,
-                annotation.notes[:200],
-                annotation.annotated_at or datetime.now().isoformat(),
-                annotation.event1_id,
-                annotation.event2_id,
-                "0",  # not exported
-                annotation_hash
-            ])
-            
-            return ann_id
-        except Exception as e:
-            self.error_message = str(e)
-            return ""
-    
-    def get_user_annotations(self, username: str, dataset_id: str = None) -> List[UserAnnotation]:
-        """Get annotations for a user"""
+    def get_user_annotations(self, username: str, dataset_id: str = None, force_refresh: bool = False) -> List[UserAnnotation]:
+        """Get annotations for a user with caching"""
+        cache_key = f"{username}_{dataset_id}" if dataset_id else f"{username}_all"
+        
+        if cache_key not in self._cache['annotations']:
+            self._cache['annotations'][cache_key] = {'data': None, 'timestamp': 0}
+        
+        cache_entry = self._cache['annotations'][cache_key]
+        
+        if not force_refresh and self._is_cache_valid(cache_entry):
+            return cache_entry['data']
+        
         try:
             records = self.annotations_sheet.get_all_records()
             annotations = []
@@ -2623,18 +3258,191 @@ class GoogleSheetsManager:
                         event2_id=record['event2_id']
                     ))
             
+            self._cache['annotations'][cache_key] = {
+                'data': annotations,
+                'timestamp': time.time()
+            }
             return annotations
         except Exception as e:
             self.error_message = str(e)
             return []
     
-    def get_all_annotations(self, dataset_id: str = None) -> List[Dict]:
-        """Get all annotations"""
+    def get_user_annotation_for_pair(self, username: str, pair_id: str) -> Optional[UserAnnotation]:
+        """Get user's annotation for a specific pair (optimized)"""
+        # Check cache first
+        cache_key = f"{username}_all"
+        if cache_key in self._cache['annotations'] and self._cache['annotations'][cache_key]['data']:
+            annotations = self._cache['annotations'][cache_key]['data']
+            for ann in annotations:
+                if ann.pair_id == pair_id:
+                    return ann
+        
+        # If not in cache, search directly
+        try:
+            # Use Google Sheets API to find specific annotation
+            cell = self.annotations_sheet.find(pair_id)
+            if cell:
+                # Get rows around this cell to find the user's annotation
+                start_row = max(2, cell.row - 10)
+                end_row = cell.row + 10
+                rows = self.annotations_sheet.get(f"A{start_row}:P{end_row}")
+                
+                for row in rows:
+                    if len(row) >= 4 and row[1] == pair_id and row[3] == username:  # row[1] = pair_id, row[3] = username
+                        return UserAnnotation(
+                            id=row[0] if len(row) > 0 else "",
+                            pair_id=row[1] if len(row) > 1 else "",
+                            dataset=row[2] if len(row) > 2 else "",
+                            username=row[3] if len(row) > 3 else "",
+                            event1_text=row[4] if len(row) > 4 else "",
+                            event2_text=row[5] if len(row) > 5 else "",
+                            cue1=int(row[6]) if len(row) > 6 and row[6] else 0,
+                            cue2=int(row[7]) if len(row) > 7 and row[7] else 0,
+                            label=int(row[8]) if len(row) > 8 and row[8] else None,
+                            confidence=int(row[9]) if len(row) > 9 and row[9] else 3,
+                            notes=row[10] if len(row) > 10 else "",
+                            annotated_at=row[11] if len(row) > 11 else "",
+                            event1_id=row[12] if len(row) > 12 else "",
+                            event2_id=row[13] if len(row) > 13 else ""
+                        )
+            return None
+        except Exception as e:
+            # Fall back to searching in all records
+            annotations = self.get_user_annotations(username)
+            for ann in annotations:
+                if ann.pair_id == pair_id:
+                    return ann
+            return None
+    
+    def save_annotation(self, annotation: UserAnnotation) -> str:
+        """Save an annotation and update cache"""
+        try:
+            ann_id = str(uuid.uuid4())[:8]
+            
+            # Generate hash for duplicate detection
+            hash_string = f"{annotation.pair_id}_{annotation.username}_{annotation.annotated_at}"
+            annotation_hash = hashlib.md5(hash_string.encode()).hexdigest()[:8]
+            
+            # Check if annotation already exists
+            existing = self.get_user_annotation_for_pair(annotation.username, annotation.pair_id)
+            
+            if existing:
+                # Update existing annotation
+                # Find the row in the sheet
+                try:
+                    cell = self.annotations_sheet.find(annotation.pair_id)
+                    if cell:
+                        # Get all annotations for this pair
+                        annotations = self.annotations_sheet.get_all_records()
+                        for i, ann in enumerate(annotations):
+                            if ann['pair_id'] == annotation.pair_id and ann['username'] == annotation.username:
+                                row_num = i + 2  # +2 because 1-indexed and header row
+                                self.annotations_sheet.update(f'A{row_num}:P{row_num}', [[
+                                    ann_id,
+                                    annotation.pair_id,
+                                    annotation.dataset,
+                                    annotation.username,
+                                    annotation.event1_text[:500],
+                                    annotation.event2_text[:500],
+                                    annotation.cue1,
+                                    annotation.cue2,
+                                    annotation.label if annotation.label is not None else "",
+                                    annotation.confidence,
+                                    annotation.notes[:200],
+                                    annotation.annotated_at or datetime.now().isoformat(),
+                                    annotation.event1_id,
+                                    annotation.event2_id,
+                                    "0",
+                                    annotation_hash
+                                ]])
+                                break
+                except:
+                    # If find fails, use alternative method
+                    annotations = self.annotations_sheet.get_all_records()
+                    for i, ann in enumerate(annotations):
+                        if ann['pair_id'] == annotation.pair_id and ann['username'] == annotation.username:
+                            row_num = i + 2
+                            self.annotations_sheet.update(f'A{row_num}:P{row_num}', [[
+                                ann_id,
+                                annotation.pair_id,
+                                annotation.dataset,
+                                annotation.username,
+                                annotation.event1_text[:500],
+                                annotation.event2_text[:500],
+                                annotation.cue1,
+                                annotation.cue2,
+                                annotation.label if annotation.label is not None else "",
+                                annotation.confidence,
+                                annotation.notes[:200],
+                                annotation.annotated_at or datetime.now().isoformat(),
+                                annotation.event1_id,
+                                annotation.event2_id,
+                                "0",
+                                annotation_hash
+                            ]])
+                            break
+            else:
+                # Create new annotation
+                self.annotations_sheet.append_row([
+                    ann_id,
+                    annotation.pair_id,
+                    annotation.dataset,
+                    annotation.username,
+                    annotation.event1_text[:500],
+                    annotation.event2_text[:500],
+                    annotation.cue1,
+                    annotation.cue2,
+                    annotation.label if annotation.label is not None else "",
+                    annotation.confidence,
+                    annotation.notes[:200],
+                    annotation.annotated_at or datetime.now().isoformat(),
+                    annotation.event1_id,
+                    annotation.event2_id,
+                    "0",
+                    annotation_hash
+                ])
+            
+            # Clear annotation cache for this user/dataset
+            cache_key = f"{annotation.username}_{annotation.dataset}"
+            if cache_key in self._cache['annotations']:
+                del self._cache['annotations'][cache_key]
+            
+            # Clear all_annotations cache for this dataset
+            if annotation.dataset in self._cache['all_annotations']:
+                del self._cache['all_annotations'][annotation.dataset]
+            
+            return ann_id
+        except Exception as e:
+            self.error_message = str(e)
+            return ""
+    
+    def get_all_annotations(self, dataset_id: str = None, force_refresh: bool = False) -> List[Dict]:
+        """Get all annotations with caching"""
+        cache_key = f"all_{dataset_id}" if dataset_id else "all"
+        
+        if cache_key not in self._cache['all_annotations']:
+            self._cache['all_annotations'][cache_key] = {'data': None, 'timestamp': 0}
+        
+        cache_entry = self._cache['all_annotations'][cache_key]
+        
+        if not force_refresh and self._is_cache_valid(cache_entry):
+            return cache_entry['data']
+        
         try:
             records = self.annotations_sheet.get_all_records()
             if dataset_id:
-                return [r for r in records if r['dataset'] == dataset_id]
-            return records
+                filtered = [r for r in records if r['dataset'] == dataset_id]
+                self._cache['all_annotations'][cache_key] = {
+                    'data': filtered,
+                    'timestamp': time.time()
+                }
+                return filtered
+            else:
+                self._cache['all_annotations'][cache_key] = {
+                    'data': records,
+                    'timestamp': time.time()
+                }
+                return records
         except Exception as e:
             self.error_message = str(e)
             return []
@@ -2642,6 +3450,17 @@ class GoogleSheetsManager:
     def get_annotations_by_pair(self, pair_id: str) -> List[UserAnnotation]:
         """Get all annotations for a specific pair"""
         try:
+            # Check cache first
+            for cache_key in self._cache['annotations']:
+                if self._cache['annotations'][cache_key]['data']:
+                    annotations = []
+                    for ann in self._cache['annotations'][cache_key]['data']:
+                        if ann.pair_id == pair_id:
+                            annotations.append(ann)
+                    if annotations:
+                        return annotations
+            
+            # If not in cache, search directly
             records = self.annotations_sheet.get_all_records()
             annotations = []
             
@@ -2669,11 +3488,60 @@ class GoogleSheetsManager:
             self.error_message = str(e)
             return []
     
-    # ========== PROGRESS MANAGEMENT ==========
+    # ========== OPTIMIZED PROGRESS MANAGEMENT ==========
+    
+    def get_user_progress(self, username: str, dataset_id: str, force_refresh: bool = False) -> Dict:
+        """Get user progress with caching"""
+        cache_key = f"{username}_{dataset_id}"
+        
+        if cache_key not in self._cache['progress']:
+            self._cache['progress'][cache_key] = {'data': None, 'timestamp': 0}
+        
+        cache_entry = self._cache['progress'][cache_key]
+        
+        if not force_refresh and self._is_cache_valid(cache_entry):
+            return cache_entry['data']
+        
+        try:
+            records = self.progress_sheet.get_all_records()
+            
+            for record in records:
+                if record['username'] == username and record['dataset'] == dataset_id:
+                    progress_data = {
+                        'current_index': int(record['current_index']) if record['current_index'] else 0,
+                        'total_annotated': int(record['total_annotated']) if record['total_annotated'] else 0,
+                        'last_updated': record['last_updated'],
+                        'last_pair_id': record.get('last_pair_id', ''),
+                        'completion_rate': record.get('completion_rate', '0%')
+                    }
+                    
+                    self._cache['progress'][cache_key] = {
+                        'data': progress_data,
+                        'timestamp': time.time()
+                    }
+                    return progress_data
+            
+            # Return default if not found
+            default_data = {
+                'current_index': 0,
+                'total_annotated': 0,
+                'last_updated': '',
+                'last_pair_id': '',
+                'completion_rate': '0%'
+            }
+            
+            self._cache['progress'][cache_key] = {
+                'data': default_data,
+                'timestamp': time.time()
+            }
+            return default_data
+        except Exception as e:
+            self.error_message = str(e)
+            return {'current_index': 0, 'total_annotated': 0, 'last_updated': ''}
     
     def update_progress(self, username: str, dataset_id: str, current_index: int, 
                        total_annotated: int, last_pair_id: str = "") -> bool:
-        """Update user progress"""
+        """Update user progress and clear cache"""
         try:
             records = self.progress_sheet.get_all_records()
             row_num = None
@@ -2701,38 +3569,17 @@ class GoogleSheetsManager:
                     f"{completion_rate:.1f}%"
                 ])
             
+            # Clear progress cache
+            cache_key = f"{username}_{dataset_id}"
+            if cache_key in self._cache['progress']:
+                del self._cache['progress'][cache_key]
+            
             return True
         except Exception as e:
             self.error_message = str(e)
             return False
     
-    def get_user_progress(self, username: str, dataset_id: str) -> Dict:
-        """Get user progress"""
-        try:
-            records = self.progress_sheet.get_all_records()
-            
-            for record in records:
-                if record['username'] == username and record['dataset'] == dataset_id:
-                    return {
-                        'current_index': int(record['current_index']) if record['current_index'] else 0,
-                        'total_annotated': int(record['total_annotated']) if record['total_annotated'] else 0,
-                        'last_updated': record['last_updated'],
-                        'last_pair_id': record.get('last_pair_id', ''),
-                        'completion_rate': record.get('completion_rate', '0%')
-                    }
-            
-            return {
-                'current_index': 0,
-                'total_annotated': 0,
-                'last_updated': '',
-                'last_pair_id': '',
-                'completion_rate': '0%'
-            }
-        except Exception as e:
-            self.error_message = str(e)
-            return {'current_index': 0, 'total_annotated': 0, 'last_updated': ''}
-    
-    # ========== EXPORT FUNCTIONALITY ==========
+    # ========== ENHANCED EXPORT FUNCTIONALITY ==========
     
     def _calculate_consensus(self, annotations: List[Dict]) -> Dict:
         """Calculate consensus metrics"""
@@ -3204,6 +4051,17 @@ st.markdown("""
         padding: 1.5rem;
         margin: 1rem 0;
     }
+    .cache-indicator {
+        position: fixed;
+        bottom: 10px;
+        right: 10px;
+        background: rgba(0,0,0,0.7);
+        color: white;
+        padding: 5px 10px;
+        border-radius: 5px;
+        font-size: 0.8em;
+        z-index: 1000;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -3245,7 +4103,7 @@ document.addEventListener('keydown', function(e) {
 </script>
 """, unsafe_allow_html=True)
 
-# Initialize session state
+# Initialize session state with optimization flags
 if 'authenticated' not in st.session_state:
     st.session_state.authenticated = False
     st.session_state.username = None
@@ -3253,8 +4111,12 @@ if 'authenticated' not in st.session_state:
     st.session_state.current_dataset = None
     st.session_state.pair_index = 0
     st.session_state.current_pairs = []
+    st.session_state.current_pairs_cache = {'data': None, 'timestamp': 0}
+    st.session_state.user_annotations_cache = {}
+    st.session_state.user_annotation_count = 0
     st.session_state.is_admin = False
     st.session_state.last_activity = datetime.now()
+    st.session_state.performance_monitor = {'last_load_time': 0, 'load_count': 0}
 
 # Session timeout check
 def check_session_timeout():
@@ -3273,9 +4135,9 @@ if GOOGLE_CONFIG is None:
     st.error("Google Sheets configuration not found. Please check your secrets.")
     st.stop()
 
-# Initialize Google Sheets
+# Initialize optimized Google Sheets manager
 if st.session_state.gsheets is None:
-    st.session_state.gsheets = GoogleSheetsManager()
+    st.session_state.gsheets = OptimizedGoogleSheetsManager()
     if not st.session_state.gsheets.connect():
         st.error(f"❌ Connection failed: {st.session_state.gsheets.error_message}")
         st.stop()
@@ -3500,12 +4362,13 @@ def dataset_management_page():
                         if st.button(f"📊 Charger pour annotation", key=f"load_{dataset.dataset_id}"):
                             st.session_state.current_dataset = dataset.dataset_id
                             st.session_state.pair_index = 0
+                            st.session_state.current_pairs = []  # Clear cache to force reload
                             st.rerun()
                     
                     with col2:
                         # Preview pairs
                         if st.button(f"👁️ Aperçu", key=f"preview_{dataset.dataset_id}"):
-                            pairs = gsheets.get_dataset_pairs(dataset.dataset_id, limit=5)
+                            pairs = gsheets.get_dataset_pairs(dataset.dataset_id)
                             if pairs:
                                 st.info(f"📋 {len(pairs)} paires chargées")
                                 # Show first 3 pairs
@@ -3728,8 +4591,8 @@ def dataset_management_page():
                     else:
                         st.error(f"❌ Erreur: {gsheets.error_message}")
 
-def annotate_page():
-    """Main annotation page"""
+def optimized_annotate_page():
+    """Optimized annotation page with reduced latency"""
     check_session_timeout()
     
     username = st.session_state.username
@@ -3761,10 +4624,12 @@ def annotate_page():
                 dataset_name = ds.name
                 break
         
+        # Check if dataset changed
         if st.session_state.current_dataset != selected_id:
             st.session_state.current_dataset = selected_id
             st.session_state.pair_index = 0
             st.session_state.current_pairs = []
+            st.session_state.current_pairs_cache = {'data': None, 'timestamp': 0}
         
         # Search functionality
         with st.expander("🔍 Recherche", expanded=False):
@@ -3774,36 +4639,55 @@ def annotate_page():
                 if search_results:
                     st.info(f"📋 {len(search_results)} résultats trouvés")
                     for i, pair in enumerate(search_results[:5]):
-                        if st.button(f"{pair.event1_text[:50]}...", key=f"search_{i}"):
+                        if st.button(f"{pair.event1_text[:50]}...", key=f"search_{i}_{pair.pair_id}"):
                             st.session_state.pair_index = pair.row_index
                             st.rerun()
                 else:
                     st.warning("Aucun résultat")
         
-        # Load dataset pairs
+        # Load dataset pairs ONCE and cache in session state
         if not st.session_state.current_pairs:
-            with st.spinner("Chargement des paires..."):
+            start_time = time.time()
+            with st.spinner("Chargement initial des paires..."):
                 pairs = gsheets.get_dataset_pairs(selected_id)
                 if not pairs:
                     st.error("❌ Erreur de chargement des paires")
                     return
                 st.session_state.current_pairs = pairs
+                st.session_state.current_pairs_cache = {
+                    'data': pairs,
+                    'timestamp': time.time()
+                }
+                load_time = time.time() - start_time
+                st.session_state.performance_monitor['last_load_time'] = load_time
+                st.session_state.performance_monitor['load_count'] = 1
+                st.success(f"✅ {len(pairs)} paires chargées en {load_time:.2f}s")
         
         pairs = st.session_state.current_pairs
         total_pairs = len(pairs)
         
-        # Load progress
+        # Load progress - cached
         progress = gsheets.get_user_progress(username, selected_id)
         current_index = progress.get('current_index', 0)
         
         if st.session_state.pair_index == 0 and current_index > 0:
             st.session_state.pair_index = min(current_index, total_pairs - 1)
         
-        # Statistics
-        user_annotations = gsheets.get_user_annotations(username, selected_id)
-        annotated_count = len(user_annotations)
-        causal_count = sum(1 for ann in user_annotations if ann.label == 1)
-        non_causal_count = sum(1 for ann in user_annotations if ann.label == 0)
+        # Load user annotations - cached (but do it in background)
+        if 'user_annotations_loaded' not in st.session_state:
+            st.session_state.user_annotations_loaded = False
+        
+        if not st.session_state.user_annotations_loaded:
+            # Load annotations once
+            user_annotations = gsheets.get_user_annotations(username, selected_id)
+            st.session_state.user_annotations_cache = {ann.pair_id: ann for ann in user_annotations}
+            st.session_state.user_annotation_count = len(user_annotations)
+            st.session_state.user_annotations_loaded = True
+        
+        # Statistics from cache
+        annotated_count = st.session_state.user_annotation_count
+        causal_count = sum(1 for ann in st.session_state.user_annotations_cache.values() if ann.label == 1)
+        non_causal_count = sum(1 for ann in st.session_state.user_annotations_cache.values() if ann.label == 0)
         
         st.markdown("### 📊 Vos statistiques")
         col1, col2 = st.columns(2)
@@ -3842,8 +4726,7 @@ def annotate_page():
         if st.button("⏭️ Prochaine non annotée", use_container_width=True):
             for i in range(st.session_state.pair_index + 1, total_pairs):
                 pair_id = pairs[i].pair_id
-                existing = [ann for ann in user_annotations if ann.pair_id == pair_id]
-                if not existing:
+                if pair_id not in st.session_state.user_annotations_cache:
                     st.session_state.pair_index = i
                     st.rerun()
                     break
@@ -3897,6 +4780,10 @@ def annotate_page():
     idx = st.session_state.pair_index
     current_pair = pairs[idx]
     
+    # Performance indicator
+    if st.session_state.performance_monitor['load_count'] > 0:
+        st.markdown(f'<div class="cache-indicator">⚡ Cache: {len(pairs)} paires | Temps: {st.session_state.performance_monitor["last_load_time"]:.2f}s</div>', unsafe_allow_html=True)
+    
     # Header
     st.markdown(f"""
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
@@ -3912,17 +4799,15 @@ def annotate_page():
     </div>
     """, unsafe_allow_html=True)
     
-    # Check if already annotated
-    existing_annotations = [ann for ann in user_annotations 
-                          if ann.pair_id == current_pair.pair_id]
+    # Check if already annotated - OPTIMIZED (from cache)
+    existing_annotation = st.session_state.user_annotations_cache.get(current_pair.pair_id)
     
-    if existing_annotations:
-        existing = existing_annotations[0]
-        label_text = "✅ Causal" if existing.label == 1 else "❌ Non causal" if existing.label == 0 else "❓ Non décidé"
+    if existing_annotation:
+        label_text = "✅ Causal" if existing_annotation.label == 1 else "❌ Non causal" if existing_annotation.label == 0 else "❓ Non décidé"
         st.markdown(f"""
         <div class="alert alert-warning">
-            ✏️ <strong>Déjà annotée</strong> le {existing.annotated_at[:16]}
-            (Confiance: {existing.confidence}/5 - {label_text})
+            ✏️ <strong>Déjà annotée</strong> le {existing_annotation.annotated_at[:16]}
+            (Confiance: {existing_annotation.confidence}/5 - {label_text})
         </div>
         """, unsafe_allow_html=True)
     
@@ -3971,16 +4856,22 @@ def annotate_page():
     with col1:
         st.markdown("#### 🔵 Événement 1 (Cause)")
         st.markdown(f'<div class="sentence-box sentence-box-causal">{current_pair.event1_text}</div>', unsafe_allow_html=True)
+        cue1_key = f"cue1_{current_pair.pair_id}"
+        if cue1_key not in st.session_state:
+            st.session_state[cue1_key] = existing_annotation.cue1 if existing_annotation else False
         cue1 = st.checkbox("Marqueur causal explicite", 
-                          value=existing_annotations[0].cue1 if existing_annotations else False,
-                          key="cue1")
+                          value=st.session_state[cue1_key],
+                          key=cue1_key)
     
     with col2:
         st.markdown("#### 🟢 Événement 2 (Effet)")
         st.markdown(f'<div class="sentence-box sentence-box-effect">{current_pair.event2_text}</div>', unsafe_allow_html=True)
+        cue2_key = f"cue2_{current_pair.pair_id}"
+        if cue2_key not in st.session_state:
+            st.session_state[cue2_key] = existing_annotation.cue2 if existing_annotation else False
         cue2 = st.checkbox("Marqueur causal explicite",
-                          value=existing_annotations[0].cue2 if existing_annotations else False,
-                          key="cue2")
+                          value=st.session_state[cue2_key],
+                          key=cue2_key)
     
     # Annotation question
     st.markdown("""
@@ -3995,24 +4886,41 @@ def annotate_page():
     col1, col2 = st.columns(2)
     
     with col1:
-        current_label = existing_annotations[0].label if existing_annotations else None
+        label_key = f"label_{current_pair.pair_id}"
+        if label_key not in st.session_state:
+            st.session_state[label_key] = existing_annotation.label if existing_annotation else None
+        
+        current_label = st.session_state[label_key]
         label = st.radio(
             "Décision",
             [1, 0],
             index=0 if current_label == 1 else (1 if current_label == 0 else 0),
             format_func=lambda x: "✅ OUI - Relation causale" if x == 1 else "❌ NON - Pas de relation",
-            key="label"
+            key=label_key
         )
+        # Update session state
+        st.session_state[label_key] = label
     
     with col2:
-        current_conf = existing_annotations[0].confidence if existing_annotations else 3
-        confidence = st.slider("Confiance", 1, 5, current_conf, key="confidence")
+        confidence_key = f"confidence_{current_pair.pair_id}"
+        if confidence_key not in st.session_state:
+            st.session_state[confidence_key] = existing_annotation.confidence if existing_annotation else 3
+        
+        current_conf = st.session_state[confidence_key]
+        confidence = st.slider("Confiance", 1, 5, current_conf, key=confidence_key)
+        st.session_state[confidence_key] = confidence
+        
+        notes_key = f"notes_{current_pair.pair_id}"
+        if notes_key not in st.session_state:
+            st.session_state[notes_key] = existing_annotation.notes if existing_annotation else ''
+        
         notes = st.text_input("Notes", 
-                             value=existing_annotations[0].notes if existing_annotations else '',
+                             value=st.session_state[notes_key],
                              placeholder="Notes optionnelles...",
-                             key="notes")
+                             key=notes_key)
+        st.session_state[notes_key] = notes
     
-    # Action buttons
+    # Action buttons with OPTIMIZED navigation
     st.markdown("---")
     col1, col2, col3, col4 = st.columns([1, 2, 2, 1])
     
@@ -4042,8 +4950,15 @@ def annotate_page():
             
             ann_id = gsheets.save_annotation(annotation)
             if ann_id:
-                user_anns = gsheets.get_user_annotations(username, selected_id)
-                gsheets.update_progress(username, selected_id, idx, len(user_anns), current_pair.pair_id)
+                # Update local cache
+                st.session_state.user_annotations_cache[current_pair.pair_id] = annotation
+                st.session_state.user_annotation_count = len(st.session_state.user_annotations_cache)
+                
+                # Update progress in background
+                gsheets.update_progress(username, selected_id, idx, 
+                                       st.session_state.user_annotation_count, 
+                                       current_pair.pair_id)
+                
                 st.success("✅ Annotation sauvegardée")
                 st.rerun()
             else:
@@ -4070,10 +4985,20 @@ def annotate_page():
             
             ann_id = gsheets.save_annotation(annotation)
             if ann_id:
-                user_anns = gsheets.get_user_annotations(username, selected_id)
-                gsheets.update_progress(username, selected_id, idx, len(user_anns), current_pair.pair_id)
+                # Update local cache
+                st.session_state.user_annotations_cache[current_pair.pair_id] = annotation
+                st.session_state.user_annotation_count = len(st.session_state.user_annotations_cache)
+                
+                # Navigate to next pair
                 if idx < total_pairs - 1:
                     st.session_state.pair_index += 1
+                
+                # Update progress in background
+                gsheets.update_progress(username, selected_id, 
+                                       st.session_state.pair_index,
+                                       st.session_state.user_annotation_count,
+                                       current_pair.pair_id)
+                
                 st.rerun()
             else:
                 st.error(f"❌ Erreur: {gsheets.error_message}")
@@ -4097,7 +5022,7 @@ def dashboard_page():
     </div>
     """, unsafe_allow_html=True)
     
-    # Get all data
+    # Get all data with caching
     datasets = gsheets.get_datasets()
     all_annotations = gsheets.get_all_annotations()
     
@@ -4251,7 +5176,25 @@ def about_page():
         Nombre de feuilles: {len(gsheets.spreadsheet.worksheets())}
         Connecté en tant que: {st.session_state.username}
         Rôle: {'Administrateur' if st.session_state.is_admin else 'Annotateur'}
+        Performance: {st.session_state.performance_monitor['load_count']} chargement(s)
         """)
+        
+        # Cache info
+        st.markdown("### 🚀 Performances")
+        cache_info = []
+        for key, value in gsheets._cache.items():
+            if isinstance(value, dict) and 'data' in value and value['data'] is not None:
+                if key == 'pairs':
+                    cache_info.append(f"{key}: {len(value)} datasets")
+                elif key in ['annotations', 'all_annotations', 'progress']:
+                    cache_info.append(f"{key}: {len(value)} entrées")
+                else:
+                    cache_info.append(f"{key}: en cache")
+        
+        if cache_info:
+            st.success("Cache actif: " + ", ".join(cache_info))
+        else:
+            st.info("Cache vide - premier chargement")
         
         # Backup
         st.markdown("### 💾 Sauvegarde")
@@ -4286,7 +5229,12 @@ def main():
         </div>
         """, unsafe_allow_html=True)
         
-        # Create navigation options based on user role
+        # Show loading spinner only on initial load
+        if st.session_state.current_pairs_cache['data'] is None:
+            with st.spinner("Chargement initial..."):
+                pass
+        
+        # Create navigation options
         if st.session_state.is_admin:
             pages = ["📤 Gérer Datasets", "✏️ Annoter", "📊 Tableau de bord", "ℹ️ À propos"]
         else:
@@ -4294,7 +5242,7 @@ def main():
         
         page = st.radio("Navigation", pages, label_visibility="collapsed")
     
-    # Show selected page with admin check
+    # Show selected page
     if page == "📤 Gérer Datasets":
         if not st.session_state.is_admin:
             st.error("⛔ Accès refusé - Cette section est réservée aux administrateurs")
@@ -4302,7 +5250,7 @@ def main():
         else:
             dataset_management_page()
     elif page == "✏️ Annoter":
-        annotate_page()
+        optimized_annotate_page()
     elif page == "📊 Tableau de bord":
         dashboard_page()
     elif page == "ℹ️ À propos":
