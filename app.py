@@ -4899,7 +4899,6 @@ def optimized_annotate_page():
             key=label_key
         )
         # Update session state
-        st.session_state[label_key] = label
     
     with col2:
         confidence_key = f"confidence_{current_pair.pair_id}"
@@ -4918,7 +4917,6 @@ def optimized_annotate_page():
                              value=st.session_state[notes_key],
                              placeholder="Notes optionnelles...",
                              key=notes_key)
-        st.session_state[notes_key] = notes
     
     # Action buttons with OPTIMIZED navigation
     st.markdown("---")
