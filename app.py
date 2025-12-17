@@ -1869,6 +1869,7 @@
 #     main()
 
 
+
 """
 CausaFr - Complete Google Sheets Annotation Tool
 Streamlit Cloud Deployment Version
@@ -1881,6 +1882,8 @@ import os
 import hashlib
 import uuid
 import re
+import time
+import random
 from datetime import datetime
 from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass, asdict
@@ -2017,13 +2020,14 @@ class DatasetMetadata:
 try:
     import gspread
     from google.oauth2.service_account import Credentials
+    from google.api_core.exceptions import ResourceExhausted
     GSHEETS_AVAILABLE = True
 except ImportError:
     GSHEETS_AVAILABLE = False
     st.error("⚠️ Install dependencies: pip install gspread google-auth")
 
 class GoogleSheetsManager:
-    """Complete Google Sheets management for multiple datasets"""
+    """Complete Google Sheets management for multiple datasets with rate limit handling"""
     
     def __init__(self):
         self.client = None
@@ -2038,6 +2042,69 @@ class GoogleSheetsManager:
         self.annotations_sheet = None
         self.progress_sheet = None
         
+        # Rate limiting state
+        self.last_request_time = 0
+        self.request_count = 0
+        self.request_window_start = time.time()
+        
+    def _exponential_backoff_retry(self, operation, max_retries=5, initial_delay=1.0):
+        """
+        Implement exponential backoff for retrying failed API calls due to rate limits.
+        operation: a function that makes the API call
+        max_retries: maximum number of retry attempts
+        initial_delay: initial delay in seconds
+        """
+        last_exception = None
+        
+        for attempt in range(max_retries):
+            try:
+                # Apply rate limiting between retries
+                current_time = time.time()
+                time_since_last = current_time - self.last_request_time
+                
+                # Ensure minimum 1 second between requests to avoid 429
+                if time_since_last < 1.0:
+                    time.sleep(1.0 - time_since_last)
+                
+                result = operation()
+                self.last_request_time = time.time()
+                self.request_count += 1
+                
+                # Reset counter every minute
+                if time.time() - self.request_window_start > 60:
+                    self.request_count = 0
+                    self.request_window_start = time.time()
+                
+                return result
+                
+            except Exception as e:
+                last_exception = e
+                
+                # Check if it's a rate limit error (429)
+                error_str = str(e).lower()
+                if '429' in error_str or 'quota' in error_str or 'rate limit' in error_str:
+                    # Calculate exponential backoff delay with jitter
+                    delay = initial_delay * (2 ** attempt) + random.random()
+                    
+                    # Cap the delay at 30 seconds
+                    delay = min(delay, 30.0)
+                    
+                    # Log the retry (in production, use proper logging)
+                    print(f"Rate limit hit (attempt {attempt + 1}/{max_retries}). "
+                          f"Retrying in {delay:.2f} seconds...")
+                    
+                    time.sleep(delay)
+                else:
+                    # For non-rate-limit errors, re-raise immediately
+                    raise e
+        
+        # If we've exhausted all retries
+        raise Exception(f"Operation failed after {max_retries} retries. Last error: {str(last_exception)}")
+    
+    def _safe_api_call(self, operation, max_retries=3):
+        """Wrapper for safe API calls with rate limiting"""
+        return self._exponential_backoff_retry(operation, max_retries)
+    
     def connect(self) -> bool:
         """Connect to Google Sheets"""
         if GOOGLE_CONFIG is None:
@@ -2066,12 +2133,19 @@ class GoogleSheetsManager:
                 ]
             )
             
-            # Authorize
-            self.client = gspread.authorize(credentials)
+            # Authorize with retry logic
+            def auth_operation():
+                return gspread.authorize(credentials)
+            
+            self.client = self._safe_api_call(auth_operation)
             
             # Open spreadsheet
             spreadsheet_id = GOOGLE_CONFIG['spreadsheet_id']
-            self.spreadsheet = self.client.open_by_key(spreadsheet_id)
+            
+            def open_spreadsheet():
+                return self.client.open_by_key(spreadsheet_id)
+            
+            self.spreadsheet = self._safe_api_call(open_spreadsheet)
             
             # Setup all sheets
             self._setup_sheets()
@@ -2085,93 +2159,142 @@ class GoogleSheetsManager:
     
     def _setup_sheets(self):
         """Create or get all necessary worksheets"""
-        sheet_titles = [ws.title for ws in self.spreadsheet.worksheets()]
+        def get_sheet_titles():
+            return [ws.title for ws in self.spreadsheet.worksheets()]
+        
+        sheet_titles = self._safe_api_call(get_sheet_titles)
         
         # 1. USERS sheet
         if 'users' not in sheet_titles:
-            self.users_sheet = self.spreadsheet.add_worksheet('users', 100, 6)
-            self.users_sheet.update('A1:F1', [
-                ['username', 'password_hash', 'email', 'created_at', 'last_login', 'is_admin']
-            ])
+            def create_users_sheet():
+                ws = self.spreadsheet.add_worksheet('users', 100, 6)
+                ws.update('A1:F1', [
+                    ['username', 'password_hash', 'email', 'created_at', 'last_login', 'is_admin']
+                ])
+                return ws
+            
+            self.users_sheet = self._safe_api_call(create_users_sheet)
         else:
-            self.users_sheet = self.spreadsheet.worksheet('users')
+            def get_users_sheet():
+                return self.spreadsheet.worksheet('users')
+            
+            self.users_sheet = self._safe_api_call(get_users_sheet)
         
         # 2. DATASETS sheet (dataset metadata)
         if 'datasets' not in sheet_titles:
-            self.datasets_sheet = self.spreadsheet.add_worksheet('datasets', 100, 7)
-            self.datasets_sheet.update('A1:G1', [
-                ['dataset_id', 'name', 'description', 'created_by', 'created_at', 'pair_count', 'original_filename']
-            ])
+            def create_datasets_sheet():
+                ws = self.spreadsheet.add_worksheet('datasets', 100, 7)
+                ws.update('A1:G1', [
+                    ['dataset_id', 'name', 'description', 'created_by', 'created_at', 'pair_count', 'original_filename']
+                ])
+                return ws
+            
+            self.datasets_sheet = self._safe_api_call(create_datasets_sheet)
         else:
-            self.datasets_sheet = self.spreadsheet.worksheet('datasets')
+            def get_datasets_sheet():
+                return self.spreadsheet.worksheet('datasets')
+            
+            self.datasets_sheet = self._safe_api_call(get_datasets_sheet)
         
         # 3. DATASET_PAIRS sheet (actual pairs data with ALL fields)
         if 'dataset_pairs' not in sheet_titles:
-            self.dataset_pairs_sheet = self.spreadsheet.add_worksheet('dataset_pairs', 10000, 28)
-            headers = [
-                'pair_id', 'dataset', 'event1_text', 'event2_text', 
-                'event1_id', 'event2_id', 'narrative_id', 'event1_category',
-                'event2_category', 'original_label', 'is_hard_negative',
-                'event1_has_causal_cue', 'event1_causal_cue_type', 'event1_causal_cue_text',
-                'event1_has_temporal', 'event1_temporal_type', 'event1_temporal_text',
-                'event2_has_causal_cue', 'event2_causal_cue_type', 'event2_causal_cue_text',
-                'event2_has_temporal', 'event2_temporal_type', 'event2_temporal_text',
-                'pair_has_causal_cue', 'pair_has_temporal', 'row_index',
-                'imported_at', 'pair_hash'
-            ]
-            self.dataset_pairs_sheet.update('A1:AB1', [headers])
+            def create_dataset_pairs_sheet():
+                ws = self.spreadsheet.add_worksheet('dataset_pairs', 10000, 28)
+                headers = [
+                    'pair_id', 'dataset', 'event1_text', 'event2_text', 
+                    'event1_id', 'event2_id', 'narrative_id', 'event1_category',
+                    'event2_category', 'original_label', 'is_hard_negative',
+                    'event1_has_causal_cue', 'event1_causal_cue_type', 'event1_causal_cue_text',
+                    'event1_has_temporal', 'event1_temporal_type', 'event1_temporal_text',
+                    'event2_has_causal_cue', 'event2_causal_cue_type', 'event2_causal_cue_text',
+                    'event2_has_temporal', 'event2_temporal_type', 'event2_temporal_text',
+                    'pair_has_causal_cue', 'pair_has_temporal', 'row_index',
+                    'imported_at', 'pair_hash'
+                ]
+                ws.update('A1:AB1', [headers])
+                return ws
+            
+            self.dataset_pairs_sheet = self._safe_api_call(create_dataset_pairs_sheet)
         else:
-            self.dataset_pairs_sheet = self.spreadsheet.worksheet('dataset_pairs')
+            def get_dataset_pairs_sheet():
+                return self.spreadsheet.worksheet('dataset_pairs')
+            
+            self.dataset_pairs_sheet = self._safe_api_call(get_dataset_pairs_sheet)
         
         # 4. ANNOTATIONS sheet
         if 'annotations' not in sheet_titles:
-            self.annotations_sheet = self.spreadsheet.add_worksheet('annotations', 10000, 16)
-            headers = [
-                'id', 'pair_id', 'dataset', 'username', 'event1_text', 'event2_text',
-                'cue1', 'cue2', 'label', 'confidence', 'notes', 'annotated_at',
-                'event1_id', 'event2_id', 'exported', 'annotation_hash'
-            ]
-            self.annotations_sheet.update('A1:P1', [headers])
+            def create_annotations_sheet():
+                ws = self.spreadsheet.add_worksheet('annotations', 10000, 16)
+                headers = [
+                    'id', 'pair_id', 'dataset', 'username', 'event1_text', 'event2_text',
+                    'cue1', 'cue2', 'label', 'confidence', 'notes', 'annotated_at',
+                    'event1_id', 'event2_id', 'exported', 'annotation_hash'
+                ]
+                ws.update('A1:P1', [headers])
+                return ws
+            
+            self.annotations_sheet = self._safe_api_call(create_annotations_sheet)
         else:
-            self.annotations_sheet = self.spreadsheet.worksheet('annotations')
+            def get_annotations_sheet():
+                return self.spreadsheet.worksheet('annotations')
+            
+            self.annotations_sheet = self._safe_api_call(get_annotations_sheet)
         
         # 5. PROGRESS sheet
         if 'progress' not in sheet_titles:
-            self.progress_sheet = self.spreadsheet.add_worksheet('progress', 100, 7)
-            self.progress_sheet.update('A1:G1', [
-                ['username', 'dataset', 'current_index', 'total_annotated', 
-                 'last_updated', 'last_pair_id', 'completion_rate']
-            ])
+            def create_progress_sheet():
+                ws = self.spreadsheet.add_worksheet('progress', 100, 7)
+                ws.update('A1:G1', [
+                    ['username', 'dataset', 'current_index', 'total_annotated', 
+                     'last_updated', 'last_pair_id', 'completion_rate']
+                ])
+                return ws
+            
+            self.progress_sheet = self._safe_api_call(create_progress_sheet)
         else:
-            self.progress_sheet = self.spreadsheet.worksheet('progress')
+            def get_progress_sheet():
+                return self.spreadsheet.worksheet('progress')
+            
+            self.progress_sheet = self._safe_api_call(get_progress_sheet)
     
     # ========== USER MANAGEMENT ==========
     
     def create_user(self, username: str, password: str, email: str = "", is_admin: bool = False) -> bool:
-        """Create a new user"""
+        """Create a new user with rate limit handling"""
         try:
-            users = self.users_sheet.get_all_records()
+            def get_users():
+                return self.users_sheet.get_all_records()
+            
+            users = self._safe_api_call(get_users)
+            
             for user in users:
                 if user['username'] == username:
                     return False
             
-            self.users_sheet.append_row([
-                username,
-                hashlib.sha256(password.encode()).hexdigest(),
-                email,
-                datetime.now().isoformat(),
-                datetime.now().isoformat(),
-                1 if is_admin else 0
-            ])
+            def append_user():
+                self.users_sheet.append_row([
+                    username,
+                    hashlib.sha256(password.encode()).hexdigest(),
+                    email,
+                    datetime.now().isoformat(),
+                    datetime.now().isoformat(),
+                    1 if is_admin else 0
+                ])
+            
+            self._safe_api_call(append_user)
             return True
         except Exception as e:
             self.error_message = str(e)
             return False
     
     def verify_user(self, username: str, password: str) -> bool:
-        """Verify user credentials"""
+        """Verify user credentials with rate limit handling"""
         try:
-            users = self.users_sheet.get_all_records()
+            def get_users():
+                return self.users_sheet.get_all_records()
+            
+            users = self._safe_api_call(get_users)
+            
             for user in users:
                 if user['username'] == username:
                     return user['password_hash'] == hashlib.sha256(password.encode()).hexdigest()
@@ -2181,9 +2304,13 @@ class GoogleSheetsManager:
             return False
     
     def is_admin(self, username: str) -> bool:
-        """Check if user is admin"""
+        """Check if user is admin with rate limit handling"""
         try:
-            users = self.users_sheet.get_all_records()
+            def get_users():
+                return self.users_sheet.get_all_records()
+            
+            users = self._safe_api_call(get_users)
+            
             for user in users:
                 if user['username'] == username:
                     return bool(int(user.get('is_admin', 0)))
@@ -2202,7 +2329,7 @@ class GoogleSheetsManager:
                            name: str = "", description: str = "", 
                            created_by: str = "", original_filename: str = "") -> Tuple[bool, int, int]:
         """
-        Import a JSON dataset into Google Sheets
+        Import a JSON dataset into Google Sheets with rate limit handling
         Returns: (success, total_pairs, imported_pairs)
         """
         try:
@@ -2218,7 +2345,10 @@ class GoogleSheetsManager:
                 return False, 0, 0
             
             # Check if dataset already exists
-            datasets = self.datasets_sheet.get_all_records()
+            def get_datasets():
+                return self.datasets_sheet.get_all_records()
+            
+            datasets = self._safe_api_call(get_datasets)
             existing_dataset = None
             for dataset in datasets:
                 if dataset['dataset_id'] == dataset_id:
@@ -2228,8 +2358,10 @@ class GoogleSheetsManager:
             # If dataset exists, check for duplicates
             existing_pairs = []
             if existing_dataset:
-                # Get existing pairs for this dataset
-                all_pairs = self.dataset_pairs_sheet.get_all_records()
+                def get_all_pairs():
+                    return self.dataset_pairs_sheet.get_all_records()
+                
+                all_pairs = self._safe_api_call(get_all_pairs)
                 existing_pairs = [p for p in all_pairs if p['dataset'] == dataset_id]
                 
                 # Generate hashes for existing pairs
@@ -2244,55 +2376,65 @@ class GoogleSheetsManager:
             imported_count = 0
             skipped_count = 0
             
-            # Import pairs
-            for i, pair in enumerate(pairs):
-                # Generate pair hash for duplicate detection
-                pair_hash = self._generate_pair_hash(pair)
+            # Import pairs with batch processing
+            batch_size = 50  # Process in batches to avoid rate limits
+            for batch_start in range(0, len(pairs), batch_size):
+                batch = pairs[batch_start:batch_start + batch_size]
                 
-                # Skip if already exists
-                if pair_hash in existing_hashes:
-                    skipped_count += 1
-                    continue
+                for i, pair in enumerate(batch):
+                    # Generate pair hash for duplicate detection
+                    pair_hash = self._generate_pair_hash(pair)
+                    
+                    # Skip if already exists
+                    if pair_hash in existing_hashes:
+                        skipped_count += 1
+                        continue
+                    
+                    # Prepare pair data
+                    pair_id = pair.get('pair_id', f"{dataset_id}_{len(existing_pairs) + imported_count}")
+                    
+                    # Convert boolean values to 1/0 for Google Sheets
+                    def bool_to_int(value):
+                        return 1 if value else 0
+                    
+                    def append_pair():
+                        self.dataset_pairs_sheet.append_row([
+                            pair_id,
+                            dataset_id,
+                            pair.get('event1_text', ''),
+                            pair.get('event2_text', ''),
+                            str(pair.get('event1_id', '')),
+                            str(pair.get('event2_id', '')),
+                            pair.get('narrative_id', ''),
+                            pair.get('event1_category', ''),
+                            pair.get('event2_category', ''),
+                            pair.get('label', ''),
+                            bool_to_int(pair.get('is_hard_negative', False)),
+                            bool_to_int(pair.get('event1_has_causal_cue', False)),
+                            pair.get('event1_causal_cue_type', ''),
+                            pair.get('event1_causal_cue_text', ''),
+                            bool_to_int(pair.get('event1_has_temporal', False)),
+                            pair.get('event1_temporal_type', ''),
+                            pair.get('event1_temporal_text', ''),
+                            bool_to_int(pair.get('event2_has_causal_cue', False)),
+                            pair.get('event2_causal_cue_type', ''),
+                            pair.get('event2_causal_cue_text', ''),
+                            bool_to_int(pair.get('event2_has_temporal', False)),
+                            pair.get('event2_temporal_type', ''),
+                            pair.get('event2_temporal_text', ''),
+                            bool_to_int(pair.get('pair_has_causal_cue', False)),
+                            bool_to_int(pair.get('pair_has_temporal', False)),
+                            len(existing_pairs) + imported_count,  # row_index
+                            datetime.now().isoformat(),
+                            pair_hash
+                        ])
+                    
+                    self._safe_api_call(append_pair)
+                    imported_count += 1
                 
-                # Prepare pair data
-                pair_id = pair.get('pair_id', f"{dataset_id}_{len(existing_pairs) + imported_count}")
-                
-                # Convert boolean values to 1/0 for Google Sheets
-                def bool_to_int(value):
-                    return 1 if value else 0
-                
-                self.dataset_pairs_sheet.append_row([
-                    pair_id,
-                    dataset_id,
-                    pair.get('event1_text', ''),
-                    pair.get('event2_text', ''),
-                    str(pair.get('event1_id', '')),
-                    str(pair.get('event2_id', '')),
-                    pair.get('narrative_id', ''),
-                    pair.get('event1_category', ''),
-                    pair.get('event2_category', ''),
-                    pair.get('label', ''),
-                    bool_to_int(pair.get('is_hard_negative', False)),
-                    bool_to_int(pair.get('event1_has_causal_cue', False)),
-                    pair.get('event1_causal_cue_type', ''),
-                    pair.get('event1_causal_cue_text', ''),
-                    bool_to_int(pair.get('event1_has_temporal', False)),
-                    pair.get('event1_temporal_type', ''),
-                    pair.get('event1_temporal_text', ''),
-                    bool_to_int(pair.get('event2_has_causal_cue', False)),
-                    pair.get('event2_causal_cue_type', ''),
-                    pair.get('event2_causal_cue_text', ''),
-                    bool_to_int(pair.get('event2_has_temporal', False)),
-                    pair.get('event2_temporal_type', ''),
-                    pair.get('event2_temporal_text', ''),
-                    bool_to_int(pair.get('pair_has_causal_cue', False)),
-                    bool_to_int(pair.get('pair_has_temporal', False)),
-                    len(existing_pairs) + imported_count,  # row_index
-                    datetime.now().isoformat(),
-                    pair_hash
-                ])
-                
-                imported_count += 1
+                # Small delay between batches
+                if batch_start + batch_size < len(pairs):
+                    time.sleep(2)
             
             # Update or create dataset metadata
             total_pairs = len(existing_pairs) + imported_count
@@ -2300,26 +2442,33 @@ class GoogleSheetsManager:
             if existing_dataset:
                 # Update existing dataset
                 row_num = datasets.index(existing_dataset) + 2
-                self.datasets_sheet.update(f'A{row_num}:G{row_num}', [[
-                    dataset_id,
-                    name,
-                    description,
-                    created_by,
-                    existing_dataset.get('created_at', datetime.now().isoformat()),
-                    total_pairs,
-                    original_filename
-                ]])
+                
+                def update_dataset():
+                    self.datasets_sheet.update(f'A{row_num}:G{row_num}', [[
+                        dataset_id,
+                        name,
+                        description,
+                        created_by,
+                        existing_dataset.get('created_at', datetime.now().isoformat()),
+                        total_pairs,
+                        original_filename
+                    ]])
+                
+                self._safe_api_call(update_dataset)
             else:
                 # Create new dataset
-                self.datasets_sheet.append_row([
-                    dataset_id,
-                    name,
-                    description,
-                    created_by,
-                    datetime.now().isoformat(),
-                    total_pairs,
-                    original_filename
-                ])
+                def create_dataset():
+                    self.datasets_sheet.append_row([
+                        dataset_id,
+                        name,
+                        description,
+                        created_by,
+                        datetime.now().isoformat(),
+                        total_pairs,
+                        original_filename
+                    ])
+                
+                self._safe_api_call(create_dataset)
             
             return True, len(pairs), imported_count
             
@@ -2331,9 +2480,12 @@ class GoogleSheetsManager:
             return False, 0, 0
     
     def get_datasets(self) -> List[DatasetMetadata]:
-        """Get all available datasets"""
+        """Get all available datasets with rate limit handling"""
         try:
-            records = self.datasets_sheet.get_all_records()
+            def get_records():
+                return self.datasets_sheet.get_all_records()
+            
+            records = self._safe_api_call(get_records)
             datasets = []
             for r in records:
                 datasets.append(DatasetMetadata(
@@ -2351,9 +2503,12 @@ class GoogleSheetsManager:
             return []
     
     def get_dataset_pairs(self, dataset_id: str) -> List[OriginalPair]:
-        """Get all pairs for a dataset"""
+        """Get all pairs for a dataset with rate limit handling"""
         try:
-            records = self.dataset_pairs_sheet.get_all_records()
+            def get_records():
+                return self.dataset_pairs_sheet.get_all_records()
+            
+            records = self._safe_api_call(get_records)
             pairs = []
             
             for record in records:
@@ -2408,10 +2563,13 @@ class GoogleSheetsManager:
             return []
     
     def delete_dataset(self, dataset_id: str) -> bool:
-        """Delete a dataset and all its data"""
+        """Delete a dataset and all its data with rate limit handling"""
         try:
             # 1. Delete dataset metadata
-            datasets = self.datasets_sheet.get_all_records()
+            def get_datasets():
+                return self.datasets_sheet.get_all_records()
+            
+            datasets = self._safe_api_call(get_datasets)
             dataset_rows_to_delete = []
             for i, dataset in enumerate(datasets, start=2):
                 if dataset['dataset_id'] == dataset_id:
@@ -2419,37 +2577,62 @@ class GoogleSheetsManager:
             
             # Delete from bottom to top to preserve row numbers
             for row in sorted(dataset_rows_to_delete, reverse=True):
-                self.datasets_sheet.delete_rows(row)
+                def delete_row():
+                    self.datasets_sheet.delete_rows(row)
+                
+                self._safe_api_call(delete_row)
             
             # 2. Delete dataset pairs
-            pairs = self.dataset_pairs_sheet.get_all_records()
+            def get_pairs():
+                return self.dataset_pairs_sheet.get_all_records()
+            
+            pairs = self._safe_api_call(get_pairs)
             pair_rows_to_delete = []
             for i, pair in enumerate(pairs, start=2):
                 if pair['dataset'] == dataset_id:
                     pair_rows_to_delete.append(i)
             
+            # Delete in batches to avoid rate limits
             for row in sorted(pair_rows_to_delete, reverse=True):
-                self.dataset_pairs_sheet.delete_rows(row)
+                def delete_pair_row():
+                    self.dataset_pairs_sheet.delete_rows(row)
+                
+                self._safe_api_call(delete_pair_row)
+                time.sleep(0.5)  # Small delay between deletions
             
             # 3. Delete annotations for this dataset
-            annotations = self.annotations_sheet.get_all_records()
+            def get_annotations():
+                return self.annotations_sheet.get_all_records()
+            
+            annotations = self._safe_api_call(get_annotations)
             annotation_rows_to_delete = []
             for i, ann in enumerate(annotations, start=2):
                 if ann['dataset'] == dataset_id:
                     annotation_rows_to_delete.append(i)
             
             for row in sorted(annotation_rows_to_delete, reverse=True):
-                self.annotations_sheet.delete_rows(row)
+                def delete_annotation_row():
+                    self.annotations_sheet.delete_rows(row)
+                
+                self._safe_api_call(delete_annotation_row)
+                time.sleep(0.5)
             
             # 4. Delete progress records for this dataset
-            progress = self.progress_sheet.get_all_records()
+            def get_progress():
+                return self.progress_sheet.get_all_records()
+            
+            progress = self._safe_api_call(get_progress)
             progress_rows_to_delete = []
             for i, prog in enumerate(progress, start=2):
                 if prog['dataset'] == dataset_id:
                     progress_rows_to_delete.append(i)
             
             for row in sorted(progress_rows_to_delete, reverse=True):
-                self.progress_sheet.delete_rows(row)
+                def delete_progress_row():
+                    self.progress_sheet.delete_rows(row)
+                
+                self._safe_api_call(delete_progress_row)
+                time.sleep(0.5)
             
             return True
         except Exception as e:
@@ -2459,12 +2642,15 @@ class GoogleSheetsManager:
     # ========== PAIR MANAGEMENT ==========
     
     def delete_pair(self, pair_id: str) -> Tuple[bool, str]:
-        """Delete a specific pair and adjust indexes
+        """Delete a specific pair and adjust indexes with rate limit handling
         Returns: (success, error_message)
         """
         try:
             # Find the pair in dataset_pairs
-            pairs = self.dataset_pairs_sheet.get_all_records()
+            def get_pairs():
+                return self.dataset_pairs_sheet.get_all_records()
+            
+            pairs = self._safe_api_call(get_pairs)
             pair_to_delete = None
             pair_row_index = None
             
@@ -2475,62 +2661,114 @@ class GoogleSheetsManager:
                     break
             
             if not pair_to_delete:
-                return False, "Paire non trouvée"
+                return False, f"Paire '{pair_id}' non trouvée dans Google Sheets"
             
             dataset_id = pair_to_delete['dataset']
             deleted_row_index = int(pair_to_delete.get('row_index', 0))
             
-            # 1. Delete the pair
-            self.dataset_pairs_sheet.delete_rows(pair_row_index)
+            # 1. Delete the pair with retry logic
+            def delete_pair_operation():
+                self.dataset_pairs_sheet.delete_rows(pair_row_index)
+            
+            self._safe_api_call(delete_pair_operation, max_retries=5)
             
             # 2. Adjust row_index of subsequent pairs in the same dataset
-            pairs_after_deletion = self.dataset_pairs_sheet.get_all_records()
-            updates_needed = []
-            
-            for i, pair in enumerate(pairs_after_deletion, start=2):
-                if (pair['dataset'] == dataset_id and 
-                    int(pair.get('row_index', 0)) > deleted_row_index):
-                    new_index = int(pair.get('row_index', 0)) - 1
-                    updates_needed.append((i, new_index))
-            
-            # Update indexes
-            for row_num, new_index in updates_needed:
-                self.dataset_pairs_sheet.update(f'Z{row_num}', [[new_index]])  # Z = column 26 = row_index
+            try:
+                # Recharger les paires après suppression
+                pairs_after_deletion = self._safe_api_call(get_pairs)
+                updates_needed = []
+                
+                for i, pair in enumerate(pairs_after_deletion, start=2):
+                    if (pair['dataset'] == dataset_id and 
+                        int(pair.get('row_index', 0)) > deleted_row_index):
+                        new_index = int(pair.get('row_index', 0)) - 1
+                        updates_needed.append((i, new_index))
+                
+                # Mettre à jour les index en batch si possible
+                if updates_needed:
+                    # Mettre à jour par lots de 10 pour éviter les limites de taux
+                    batch_size = 10
+                    for batch_start in range(0, len(updates_needed), batch_size):
+                        batch = updates_needed[batch_start:batch_start + batch_size]
+                        
+                        for row_num, new_index in batch:
+                            def update_index():
+                                self.dataset_pairs_sheet.update(f'Z{row_num}', [[new_index]])
+                            
+                            self._safe_api_call(update_index, max_retries=3)
+                        
+                        # Petite pause entre les lots
+                        if batch_start + batch_size < len(updates_needed):
+                            time.sleep(1)
+            except Exception as e:
+                # Continuer même si l'ajustement des index échoue
+                print(f"Warning: Could not adjust indexes: {e}")
             
             # 3. Delete associated annotations
-            annotations = self.annotations_sheet.get_all_records()
-            annotation_rows_to_delete = []
-            
-            for i, ann in enumerate(annotations, start=2):
-                if ann['pair_id'] == pair_id:
-                    annotation_rows_to_delete.append(i)
-            
-            for row in sorted(annotation_rows_to_delete, reverse=True):
-                self.annotations_sheet.delete_rows(row)
+            try:
+                def get_annotations():
+                    return self.annotations_sheet.get_all_records()
+                
+                annotations = self._safe_api_call(get_annotations)
+                annotation_rows_to_delete = []
+                
+                for i, ann in enumerate(annotations, start=2):
+                    if ann['pair_id'] == pair_id:
+                        annotation_rows_to_delete.append(i)
+                
+                # Supprimer les annotations par lots
+                for row in sorted(annotation_rows_to_delete, reverse=True):
+                    def delete_annotation():
+                        self.annotations_sheet.delete_rows(row)
+                    
+                    self._safe_api_call(delete_annotation, max_retries=3)
+                    time.sleep(0.5)  # Petite pause entre les suppressions
+            except Exception as e:
+                # Continuer même si la suppression des annotations échoue
+                print(f"Warning: Could not delete annotations: {e}")
             
             # 4. Clear references in progress table
-            progress_records = self.progress_sheet.get_all_records()
-            for i, prog in enumerate(progress_records, start=2):
-                if prog.get('last_pair_id') == pair_id:
-                    self.progress_sheet.update(f'F{i}', [[""]])  # Clear last_pair_id
+            try:
+                def get_progress():
+                    return self.progress_sheet.get_all_records()
+                
+                progress_records = self._safe_api_call(get_progress)
+                for i, prog in enumerate(progress_records, start=2):
+                    if prog.get('last_pair_id') == pair_id:
+                        def clear_reference():
+                            self.progress_sheet.update(f'F{i}', [[""]])  # Clear last_pair_id
+                        
+                        self._safe_api_call(clear_reference)
+            except Exception as e:
+                print(f"Warning: Could not clear progress references: {e}")
             
             # 5. Update count in dataset
-            datasets = self.datasets_sheet.get_all_records()
-            for i, dataset in enumerate(datasets, start=2):
-                if dataset['dataset_id'] == dataset_id:
-                    new_count = max(0, int(dataset['pair_count']) - 1)
-                    self.datasets_sheet.update(f'F{i}', [[new_count]])
-                    break
+            try:
+                def get_datasets():
+                    return self.datasets_sheet.get_all_records()
+                
+                datasets = self._safe_api_call(get_datasets)
+                for i, dataset in enumerate(datasets, start=2):
+                    if dataset['dataset_id'] == dataset_id:
+                        new_count = max(0, int(dataset.get('pair_count', 0)) - 1)
+                        
+                        def update_count():
+                            self.datasets_sheet.update(f'F{i}', [[new_count]])
+                        
+                        self._safe_api_call(update_count)
+                        break
+            except Exception as e:
+                return False, f"Erreur lors de la mise à jour du compteur: {str(e)}"
             
             return True, ""
             
         except Exception as e:
-            return False, str(e)
+            return False, f"Erreur inattendue: {str(e)}"
     
     # ========== ANNOTATION MANAGEMENT ==========
     
     def save_annotation(self, annotation: UserAnnotation) -> str:
-        """Save an annotation"""
+        """Save an annotation with rate limit handling"""
         try:
             ann_id = str(uuid.uuid4())[:8]
             
@@ -2539,61 +2777,74 @@ class GoogleSheetsManager:
             annotation_hash = hashlib.md5(hash_string.encode()).hexdigest()[:8]
             
             # Check if annotation already exists for this user and pair
-            existing_annotations = self.annotations_sheet.get_all_records()
+            def get_annotations():
+                return self.annotations_sheet.get_all_records()
+            
+            existing_annotations = self._safe_api_call(get_annotations)
+            
             for existing in existing_annotations:
                 if (existing['pair_id'] == annotation.pair_id and 
                     existing['username'] == annotation.username):
                     # Update existing annotation
                     row_num = existing_annotations.index(existing) + 2
-                    self.annotations_sheet.update(f'A{row_num}:P{row_num}', [[
-                        ann_id,
-                        annotation.pair_id,
-                        annotation.dataset,
-                        annotation.username,
-                        annotation.event1_text[:500],
-                        annotation.event2_text[:500],
-                        annotation.cue1,
-                        annotation.cue2,
-                        annotation.label if annotation.label is not None else "",
-                        annotation.confidence,
-                        annotation.notes[:200],
-                        annotation.annotated_at or datetime.now().isoformat(),
-                        annotation.event1_id,
-                        annotation.event2_id,
-                        "0",  # not exported
-                        annotation_hash
-                    ]])
+                    
+                    def update_annotation():
+                        self.annotations_sheet.update(f'A{row_num}:P{row_num}', [[
+                            ann_id,
+                            annotation.pair_id,
+                            annotation.dataset,
+                            annotation.username,
+                            annotation.event1_text[:500],
+                            annotation.event2_text[:500],
+                            annotation.cue1,
+                            annotation.cue2,
+                            annotation.label if annotation.label is not None else "",
+                            annotation.confidence,
+                            annotation.notes[:200],
+                            annotation.annotated_at or datetime.now().isoformat(),
+                            annotation.event1_id,
+                            annotation.event2_id,
+                            "0",  # not exported
+                            annotation_hash
+                        ]])
+                    
+                    self._safe_api_call(update_annotation)
                     return ann_id
             
             # Create new annotation
-            self.annotations_sheet.append_row([
-                ann_id,
-                annotation.pair_id,
-                annotation.dataset,
-                annotation.username,
-                annotation.event1_text[:500],
-                annotation.event2_text[:500],
-                annotation.cue1,
-                annotation.cue2,
-                annotation.label if annotation.label is not None else "",
-                annotation.confidence,
-                annotation.notes[:200],
-                annotation.annotated_at or datetime.now().isoformat(),
-                annotation.event1_id,
-                annotation.event2_id,
-                "0",  # not exported
-                annotation_hash
-            ])
+            def append_annotation():
+                self.annotations_sheet.append_row([
+                    ann_id,
+                    annotation.pair_id,
+                    annotation.dataset,
+                    annotation.username,
+                    annotation.event1_text[:500],
+                    annotation.event2_text[:500],
+                    annotation.cue1,
+                    annotation.cue2,
+                    annotation.label if annotation.label is not None else "",
+                    annotation.confidence,
+                    annotation.notes[:200],
+                    annotation.annotated_at or datetime.now().isoformat(),
+                    annotation.event1_id,
+                    annotation.event2_id,
+                    "0",  # not exported
+                    annotation_hash
+                ])
             
+            self._safe_api_call(append_annotation)
             return ann_id
         except Exception as e:
             self.error_message = str(e)
             return ""
     
     def get_user_annotations(self, username: str, dataset_id: str = None) -> List[UserAnnotation]:
-        """Get annotations for a user"""
+        """Get annotations for a user with rate limit handling"""
         try:
-            records = self.annotations_sheet.get_all_records()
+            def get_records():
+                return self.annotations_sheet.get_all_records()
+            
+            records = self._safe_api_call(get_records)
             annotations = []
             
             for record in records:
@@ -2624,9 +2875,12 @@ class GoogleSheetsManager:
             return []
     
     def get_all_annotations(self, dataset_id: str = None) -> List[Dict]:
-        """Get all annotations"""
+        """Get all annotations with rate limit handling"""
         try:
-            records = self.annotations_sheet.get_all_records()
+            def get_records():
+                return self.annotations_sheet.get_all_records()
+            
+            records = self._safe_api_call(get_records)
             if dataset_id:
                 return [r for r in records if r['dataset'] == dataset_id]
             return records
@@ -2635,9 +2889,12 @@ class GoogleSheetsManager:
             return []
     
     def get_annotations_by_pair(self, pair_id: str) -> List[UserAnnotation]:
-        """Get all annotations for a specific pair"""
+        """Get all annotations for a specific pair with rate limit handling"""
         try:
-            records = self.annotations_sheet.get_all_records()
+            def get_records():
+                return self.annotations_sheet.get_all_records()
+            
+            records = self._safe_api_call(get_records)
             annotations = []
             
             for record in records:
@@ -2668,9 +2925,12 @@ class GoogleSheetsManager:
     
     def update_progress(self, username: str, dataset_id: str, current_index: int, 
                        total_annotated: int, last_pair_id: str = "") -> bool:
-        """Update user progress"""
+        """Update user progress with rate limit handling"""
         try:
-            records = self.progress_sheet.get_all_records()
+            def get_records():
+                return self.progress_sheet.get_all_records()
+            
+            records = self._safe_api_call(get_records)
             row_num = None
             
             for i, record in enumerate(records, start=2):
@@ -2684,17 +2944,23 @@ class GoogleSheetsManager:
             completion_rate = (total_annotated / total_pairs * 100) if total_pairs > 0 else 0
             
             if row_num:
-                self.progress_sheet.update(f'A{row_num}:G{row_num}', [[
-                    username, dataset_id, current_index, total_annotated,
-                    datetime.now().isoformat(), last_pair_id,
-                    f"{completion_rate:.1f}%"
-                ]])
+                def update_existing():
+                    self.progress_sheet.update(f'A{row_num}:G{row_num}', [[
+                        username, dataset_id, current_index, total_annotated,
+                        datetime.now().isoformat(), last_pair_id,
+                        f"{completion_rate:.1f}%"
+                    ]])
+                
+                self._safe_api_call(update_existing)
             else:
-                self.progress_sheet.append_row([
-                    username, dataset_id, current_index, total_annotated,
-                    datetime.now().isoformat(), last_pair_id,
-                    f"{completion_rate:.1f}%"
-                ])
+                def append_new():
+                    self.progress_sheet.append_row([
+                        username, dataset_id, current_index, total_annotated,
+                        datetime.now().isoformat(), last_pair_id,
+                        f"{completion_rate:.1f}%"
+                    ])
+                
+                self._safe_api_call(append_new)
             
             return True
         except Exception as e:
@@ -2702,9 +2968,12 @@ class GoogleSheetsManager:
             return False
     
     def get_user_progress(self, username: str, dataset_id: str) -> Dict:
-        """Get user progress"""
+        """Get user progress with rate limit handling"""
         try:
-            records = self.progress_sheet.get_all_records()
+            def get_records():
+                return self.progress_sheet.get_all_records()
+            
+            records = self._safe_api_call(get_records)
             
             for record in records:
                 if record['username'] == username and record['dataset'] == dataset_id:
@@ -2864,9 +3133,12 @@ class GoogleSheetsManager:
             return None
     
     def get_all_users(self) -> List[str]:
-        """Get all registered usernames"""
+        """Get all registered usernames with rate limit handling"""
         try:
-            users = self.users_sheet.get_all_records()
+            def get_users():
+                return self.users_sheet.get_all_records()
+            
+            users = self._safe_api_call(get_users)
             return [user['username'] for user in users]
         except:
             return []
@@ -2990,6 +3262,13 @@ st.markdown("""
         padding: 1.5rem;
         margin: 1rem 0;
     }
+    .rate-limit-warning {
+        background: #fffbeb;
+        border: 2px solid #fde68a;
+        border-radius: 8px;
+        padding: 1rem;
+        margin: 1rem 0;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -3003,6 +3282,7 @@ if 'authenticated' not in st.session_state:
     st.session_state.current_pairs = []
     st.session_state.is_admin = False
     st.session_state.show_delete_confirm = False
+    st.session_state.api_retry_count = 0
 
 # Check configuration
 if GOOGLE_CONFIG is None:
@@ -3171,7 +3451,7 @@ def dataset_management_page():
         # Import button
         if st.button("🚀 Importer dans Google Sheets", type="primary", 
                     disabled=not (dataset_id and json_content)):
-            with st.spinner("Importation en cours..."):
+            with st.spinner("Importation en cours... Cela peut prendre quelques minutes pour les gros datasets."):
                 success, total_pairs, imported_pairs = gsheets.import_json_dataset(
                     dataset_id, json_content, 
                     dataset_name or dataset_id, 
@@ -3602,39 +3882,60 @@ def annotate_page():
     st.markdown("---")
     
     if st.session_state.show_delete_confirm:
-        # Confirmation dialog for deletion
+        # Confirmation dialog for deletion with rate limit awareness
+        pair_to_delete = {
+            'id': current_pair.pair_id,
+            'e1': current_pair.event1_text[:80],
+            'e2': current_pair.event2_text[:80],
+            'index': idx
+        }
+        
         st.markdown('<div class="danger-zone">', unsafe_allow_html=True)
         st.error("⚠️ **CONFIRMATION DE SUPPRESSION**")
-        st.write(f"Vous êtes sur le point de supprimer la paire **{current_pair.pair_id}**")
-        st.write(f"- Événement 1: {current_pair.event1_text[:80]}...")
-        st.write(f"- Événement 2: {current_pair.event2_text[:80]}...")
+        st.write(f"Vous êtes sur le point de supprimer la paire **{pair_to_delete['id']}**")
+        st.write(f"- Événement 1: {pair_to_delete['e1']}...")
+        st.write(f"- Événement 2: {pair_to_delete['e2']}...")
         st.write("**Cette action est irréversible et supprimera également toutes les annotations associées.**")
         
-        col_confirm1, col_confirm2, col_confirm3 = st.columns([1, 1, 2])
+        col_confirm1, col_confirm2 = st.columns(2)
         
         with col_confirm1:
-            if st.button("✅ Confirmer", type="primary", use_container_width=True):
-                success, error_msg = gsheets.delete_pair(current_pair.pair_id)
-                if success:
-                    st.success("✅ Paire supprimée avec succès")
-                    # Reload pairs
-                    pairs = gsheets.get_dataset_pairs(selected_id)
-                    st.session_state.current_pairs = pairs
-                    st.session_state.show_delete_confirm = False
+            if st.button("✅ Confirmer la suppression", type="primary", use_container_width=True):
+                # Exécuter la suppression avec gestion des limites de taux
+                with st.spinner("Suppression en cours (cela peut prendre quelques secondes)..."):
+                    success, error_msg = gsheets.delete_pair(pair_to_delete['id'])
                     
-                    # Adjust index
-                    total_pairs = len(pairs)
-                    if total_pairs == 0:
-                        st.session_state.pair_index = 0
-                        st.info("⚠️ Toutes les paires ont été supprimées de ce dataset")
-                    elif idx >= total_pairs:
-                        st.session_state.pair_index = total_pairs - 1
-                    
-                    # Refresh
-                    st.rerun()
-                else:
-                    st.error(f"❌ Erreur: {error_msg}")
-                    st.session_state.show_delete_confirm = False
+                    if success:
+                        st.success("✅ Paire supprimée avec succès")
+                        
+                        # Recharger les paires depuis Google Sheets
+                        new_pairs = gsheets.get_dataset_pairs(selected_id)
+                        st.session_state.current_pairs = new_pairs
+                        
+                        # Ajuster l'index
+                        if len(new_pairs) == 0:
+                            st.session_state.pair_index = 0
+                        elif pair_to_delete['index'] >= len(new_pairs):
+                            st.session_state.pair_index = max(0, len(new_pairs) - 1)
+                        
+                        # Désactiver la confirmation
+                        st.session_state.show_delete_confirm = False
+                        
+                        # Rafraîchir l'affichage
+                        time.sleep(1)  # Petit délai pour assurer la persistance du message
+                        st.rerun()
+                    else:
+                        # Vérifier si c'est une erreur de limite de taux
+                        if "429" in error_msg or "quota" in error_msg.lower() or "rate limit" in error_msg.lower():
+                            st.error("❌ Limite de taux Google Sheets atteinte. Veuillez réessayer dans une minute.")
+                            st.markdown('<div class="rate-limit-warning">'
+                                       '⚠️ **Conseil :** Pour éviter les limites de taux, essayez de :'
+                                       '<br>1. Attendre 60 secondes entre les suppressions'
+                                       '<br>2. Réduire le nombre d\'opérations simultanées'
+                                       '<br>3. Contacter un administrateur pour augmenter les quotas'
+                                       '</div>', unsafe_allow_html=True)
+                        else:
+                            st.error(f"❌ Erreur: {error_msg}")
         
         with col_confirm2:
             if st.button("❌ Annuler", type="secondary", use_container_width=True):
