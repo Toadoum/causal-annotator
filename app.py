@@ -4907,7 +4907,7 @@ def optimized_annotate_page():
         
         current_conf = st.session_state[confidence_key]
         confidence = st.slider("Confiance", 1, 5, current_conf, key=confidence_key)
-        st.session_state[confidence_key] = confidence
+        
         
         notes_key = f"notes_{current_pair.pair_id}"
         if notes_key not in st.session_state:
